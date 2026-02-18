@@ -1,0 +1,8 @@
+auth.json
+*.swp
+*.swo
+sessions/
+cache/
+bin/
+skills-all/
+pi-debug.log

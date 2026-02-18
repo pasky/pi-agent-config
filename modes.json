@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "currentMode": "smart",
+  "modes": {
+    "rush": {
+      "provider": "anthropic",
+      "modelId": "claude-haiku-4-5",
+      "thinkingLevel": "low"
+    },
+    "smart": {
+      "provider": "anthropic",
+      "modelId": "claude-opus-4-6",
+      "thinkingLevel": "low"
+    },
+    "deep": {
+      "provider": "openai-codex",
+      "modelId": "gpt-5.3-codex",
+      "thinkingLevel": "high"
+    },
+    "brm": {
+      "provider": "openai-codex",
+      "modelId": "gpt-5.3-codex",
+      "thinkingLevel": "low",
+      "color": "yellow"
+    }
+  }
+}

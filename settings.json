@@ -1,0 +1,19 @@
+{
+  "lastChangelogVersion": "0.53.0",
+  "defaultProvider": "anthropic",
+  "defaultModel": "claude-opus-4-6",
+  "defaultThinkingLevel": "low",
+  "enabledModels": [
+    "anthropic/claude-sonnet-4-6",
+    "anthropic/claude-opus-4-6",
+    "openai-codex/gpt-5.3-codex",
+    "openai-codex/gpt-5.3-codex-spark",
+    "openai-codex/gpt-5.2"
+  ],
+  "hideThinkingBlock": true,
+  "packages": [
+    "/home/pasky/projects/pi-amplike",
+    "/home/pasky/projects/pi-sub/packages/sub-core",
+    "/home/pasky/projects/pi-sub/packages/sub-bar"
+  ]
+}
