@@ -13,7 +13,7 @@
   "hideThinkingBlock": true,
   "packages": [
     "/home/pasky/.pi/agent/packages/pi-amplike",
-    "/home/pasky/.pi/agent/packages/pi-sub/packages/pi-sub-core",
-    "/home/pasky/.pi/agent/packages/pi-sub/packages/pi-sub-bar"
+    "/home/pasky/.pi/agent/packages/pi-sub/packages/sub-core",
+    "/home/pasky/.pi/agent/packages/pi-sub/packages/sub-bar"
   ]
 }

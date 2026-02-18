@@ -3,4 +3,4 @@
 	url = https://github.com/pasky/pi-amplike.git
 [submodule "packages/pi-sub"]
 	path = packages/pi-sub
-	url = https://github.com/pasky/pi-sub-reconstructed.git
+	url = https://github.com/pasky/pi-sub.git
