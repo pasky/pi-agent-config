@@ -12,8 +12,8 @@
   ],
   "hideThinkingBlock": true,
   "packages": [
-    "/home/pasky/projects/pi-amplike",
-    "/home/pasky/projects/pi-sub/packages/sub-core",
-    "/home/pasky/projects/pi-sub/packages/sub-bar"
+    "/home/pasky/.pi/agent/packages/pi-amplike",
+    "/home/pasky/.pi/agent/packages/pi-sub/packages/pi-sub-core",
+    "/home/pasky/.pi/agent/packages/pi-sub/packages/pi-sub-bar"
   ]
 }
