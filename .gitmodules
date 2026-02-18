@@ -4,3 +4,4 @@
 [submodule "packages/pi-sub"]
 	path = packages/pi-sub
 	url = https://github.com/pasky/pi-sub.git
+	branch = status-context-bar
