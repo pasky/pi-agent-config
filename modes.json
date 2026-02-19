@@ -3,7 +3,7 @@
   "currentMode": "normal",
   "modes": {
     "rush": {
-      "provider": "anthropic",
+      "provider": "openai-codex",
       "modelId": "gpt-5.3-codex",
       "thinkingLevel": "low"
     },
@@ -15,7 +15,7 @@
     "smart": {
       "provider": "anthropic",
       "modelId": "claude-opus-4-6",
-      "thinkingLevel": "low"
+      "thinkingLevel": "medium"
     },
     "deep": {
       "provider": "openai-codex",
