@@ -20,7 +20,7 @@
     "deep": {
       "provider": "openai-codex",
       "modelId": "gpt-5.3-codex",
-      "thinkingLevel": "high"
+      "thinkingLevel": "xhigh"
     }
   }
 }
