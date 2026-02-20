@@ -5,3 +5,6 @@
 	path = packages/pi-sub
 	url = https://github.com/pasky/pi-sub.git
 	branch = status-context-bar
+[submodule "packages/claude-agent-sdk-pi"]
+	path = packages/claude-agent-sdk-pi
+	url = https://github.com/prateekmedia/claude-agent-sdk-pi

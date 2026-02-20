@@ -8,12 +8,12 @@
       "thinkingLevel": "low"
     },
     "normal": {
-      "provider": "anthropic",
+      "provider": "claude-agent-sdk",
       "modelId": "claude-sonnet-4-6",
       "thinkingLevel": "medium"
     },
     "smart": {
-      "provider": "anthropic",
+      "provider": "claude-agent-sdk",
       "modelId": "claude-opus-4-6",
       "thinkingLevel": "medium"
     },

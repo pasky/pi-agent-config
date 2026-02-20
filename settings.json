@@ -1,18 +1,20 @@
 {
-  "lastChangelogVersion": "0.53.0",
-  "defaultProvider": "anthropic",
+  "lastChangelogVersion": "0.54.0",
+  "defaultProvider": "claude-agent-sdk",
   "defaultModel": "claude-sonnet-4-6",
   "defaultThinkingLevel": "medium",
   "enabledModels": [
-    "anthropic/claude-sonnet-4-6",
-    "anthropic/claude-opus-4-6",
     "openai-codex/gpt-5.3-codex",
-    "openai-codex/gpt-5.2"
+    "openai-codex/gpt-5.2",
+    "claude-agent-sdk/claude-opus-4-6",
+    "claude-agent-sdk/claude-sonnet-4-6",
+    "claude-agent-sdk/claude-haiku-4-5"
   ],
   "hideThinkingBlock": true,
   "packages": [
     "packages/pi-amplike",
     "packages/pi-sub/packages/sub-core",
-    "packages/pi-sub/packages/sub-bar"
+    "packages/pi-sub/packages/sub-bar",
+    "packages/claude-agent-sdk-pi"
   ]
 }
