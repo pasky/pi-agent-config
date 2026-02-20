@@ -8,3 +8,4 @@
 [submodule "packages/claude-agent-sdk-pi"]
 	path = packages/claude-agent-sdk-pi
 	url = https://github.com/prateekmedia/claude-agent-sdk-pi
+	branch = perfect
