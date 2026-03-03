@@ -6,3 +6,4 @@ cache/
 bin/
 skills-all/
 pi-debug.log
+*-agent-worktree-*/

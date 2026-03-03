@@ -1,20 +1,24 @@
 {
-  "lastChangelogVersion": "0.54.0",
-  "defaultProvider": "claude-agent-sdk",
-  "defaultModel": "claude-sonnet-4-6",
+  "lastChangelogVersion": "0.55.4",
+  "defaultProvider": "anthropic",
+  "defaultModel": "claude-opus-4-6",
   "defaultThinkingLevel": "medium",
   "enabledModels": [
     "openai-codex/gpt-5.3-codex",
     "openai-codex/gpt-5.2",
-    "claude-agent-sdk/claude-opus-4-6",
-    "claude-agent-sdk/claude-sonnet-4-6",
-    "claude-agent-sdk/claude-haiku-4-5"
+    "anthropic/claude-opus-4-6",
+    "anthropic/claude-sonnet-4-6",
+    "anthropic/claude-haiku-4-5",
+    "blindtest/blind"
   ],
   "hideThinkingBlock": true,
   "packages": [
     "packages/pi-amplike",
     "packages/pi-sub/packages/sub-core",
     "packages/pi-sub/packages/sub-bar",
-    "packages/claude-agent-sdk-pi"
-  ]
+    "packages/pi-side-agents"
+  ],
+  "claudeAgentSdkProvider": {
+    "overrideSystemPrompt": true
+  }
 }

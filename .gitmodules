@@ -9,3 +9,9 @@
 	path = packages/claude-agent-sdk-pi
 	url = https://github.com/prateekmedia/claude-agent-sdk-pi
 	branch = perfect
+[submodule "packages/pi-blindtest"]
+	path = packages/pi-blindtest
+	url = git@github.com:pasky/pi-blindtest.git
+[submodule "packages/pi-side-agents"]
+	path = packages/pi-side-agents
+	url = git@github.com:pasky/pi-side-agents.git

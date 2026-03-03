@@ -6,7 +6,7 @@
   },
   "providers": {
     "anthropic": {
-      "enabled": "auto",
+      "enabled": true,
       "fetchStatus": true
     },
     "copilot": {
