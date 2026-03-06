@@ -1,15 +1,13 @@
 {
-  "lastChangelogVersion": "0.55.4",
-  "defaultProvider": "anthropic",
-  "defaultModel": "claude-opus-4-6",
-  "defaultThinkingLevel": "medium",
+  "lastChangelogVersion": "0.56.2",
+  "defaultProvider": "openai-codex",
+  "defaultModel": "gpt-5.4",
+  "defaultThinkingLevel": "xhigh",
   "enabledModels": [
-    "openai-codex/gpt-5.3-codex",
-    "openai-codex/gpt-5.2",
     "anthropic/claude-opus-4-6",
     "anthropic/claude-sonnet-4-6",
     "anthropic/claude-haiku-4-5",
-    "blindtest/blind"
+    "openai-codex/gpt-5.4"
   ],
   "hideThinkingBlock": true,
   "packages": [
@@ -17,6 +15,9 @@
     "packages/pi-sub/packages/sub-core",
     "packages/pi-sub/packages/sub-bar",
     "packages/pi-side-agents"
+  ],
+  "extensions": [
+    "extensions/tps.ts"
   ],
   "claudeAgentSdkProvider": {
     "overrideSystemPrompt": true
