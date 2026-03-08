@@ -21,6 +21,11 @@
       "provider": "openai-codex",
       "modelId": "gpt-5.4",
       "thinkingLevel": "xhigh"
+    },
+    "local": {
+      "provider": "llama",
+      "modelId": "qwen3.5-35b-a3b",
+      "thinkingLevel": "minimal"
     }
   }
 }

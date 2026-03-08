@@ -1,0 +1,25 @@
+{
+  "providers": {
+    "llama": {
+      "baseUrl": "http://localhost:8888/v1",
+      "api": "openai-completions",
+      "apiKey": "unused",
+      "models": [
+        {
+          "id": "qwen3.5-35b-a3b",
+          "name": "Qwen 3.5 35B-A3B (Local)",
+          "reasoning": true,
+          "input": ["text"],
+          "contextWindow": 128000,
+          "maxTokens": 32000,
+          "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+          "compat": {
+            "maxTokensField": "max_tokens",
+            "supportsDeveloperRole": false,
+            "thinkingFormat": "qwen"
+          }
+        }
+      ]
+    }
+  }
+}
