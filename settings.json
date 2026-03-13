@@ -14,7 +14,8 @@
     "packages/pi-amplike",
     "packages/pi-sub/packages/sub-core",
     "packages/pi-sub/packages/sub-bar",
-    "packages/pi-side-agents"
+    "packages/pi-side-agents",
+    "packages/chrome-cdp-skill"
   ],
   "extensions": [
     "extensions/tps.ts"
