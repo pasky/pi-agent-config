@@ -1,2 +1,3 @@
 - When rm -rf, make sure you are 100% sure about everything this is going to irrecoverably wipe; consider mv x x~ instead
 - Use uv for everything Python-related (venv creation, package installs, running scripts)
+- Any subagents use for research should use the deep mode.
