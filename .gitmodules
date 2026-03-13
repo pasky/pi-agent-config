@@ -15,3 +15,6 @@
 [submodule "packages/pi-side-agents"]
 	path = packages/pi-side-agents
 	url = git@github.com:pasky/pi-side-agents.git
+[submodule "packages/chrome-cdp-skill"]
+	path = packages/chrome-cdp-skill
+	url = https://github.com/pasky/chrome-cdp-skill.git
