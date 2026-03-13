@@ -31,6 +31,9 @@ If the hook doesn't fire (first pull after clone), run `./setup.sh` manually.
 - `packages/` — pi extensions as git submodules:
   - `pi-amplike` — skills (web search, visit webpage, session query), extensions (modes, handoff, etc.)
   - `pi-sub` — sub-core and sub-bar extensions
+  - `pi-side-agents` — background side agents in tmux worktrees for parallel async workflows
+  - `pi-blindtest` — blind model testing extension
+  - `claude-agent-sdk-pi` — custom provider routing LLM calls through the Claude Agent SDK
   - `chrome-cdp-skill` — skill for interacting with a live Chrome browser session via CDP
 
 ## What's excluded
