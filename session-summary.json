@@ -1,0 +1,6 @@
+{
+  "debounceSeconds": 120,
+  "maxTokens": 300,
+  "resummarizeTokenThreshold": 40000,
+  "verbose": true
+}
