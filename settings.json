@@ -1,20 +1,21 @@
 {
-  "lastChangelogVersion": "0.56.2",
-  "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-5.4",
-  "defaultThinkingLevel": "xhigh",
+  "lastChangelogVersion": "0.64.0",
+  "defaultProvider": "anthropic",
+  "defaultModel": "claude-opus-4-6",
+  "defaultThinkingLevel": "medium",
   "enabledModels": [
     "anthropic/claude-opus-4-6",
     "anthropic/claude-sonnet-4-6",
     "anthropic/claude-haiku-4-5",
     "openai-codex/gpt-5.4"
   ],
-  "hideThinkingBlock": true,
+  "hideThinkingBlock": false,
   "packages": [
     "packages/pi-amplike",
     "packages/pi-sub/packages/sub-core",
     "packages/pi-sub/packages/sub-bar",
     "packages/pi-side-agents",
+    "packages/pi-session-summary",
     "packages/chrome-cdp-skill"
   ],
   "extensions": [
