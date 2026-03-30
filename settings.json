@@ -15,6 +15,7 @@
     "packages/pi-sub/packages/sub-core",
     "packages/pi-sub/packages/sub-bar",
     "packages/pi-side-agents",
+    "packages/pi-session-summary",
     "packages/chrome-cdp-skill"
   ],
   "extensions": [
