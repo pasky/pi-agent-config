@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "0.64.0",
+  "lastChangelogVersion": "0.65.0",
   "defaultProvider": "anthropic",
   "defaultModel": "claude-opus-4-6",
   "defaultThinkingLevel": "medium",
@@ -12,16 +12,13 @@
   "hideThinkingBlock": false,
   "packages": [
     "packages/pi-amplike",
-    "packages/pi-sub/packages/sub-core",
-    "packages/pi-sub/packages/sub-bar",
+    "npm:@marckrenn/pi-sub-core@1.5.0",
+    "npm:@marckrenn/pi-sub-bar@1.5.0",
     "packages/pi-side-agents",
     "packages/pi-session-summary",
     "packages/chrome-cdp-skill"
   ],
   "extensions": [
     "extensions/tps.ts"
-  ],
-  "claudeAgentSdkProvider": {
-    "overrideSystemPrompt": true
-  }
+  ]
 }
