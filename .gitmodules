@@ -1,6 +1,7 @@
 [submodule "packages/pi-amplike"]
 	path = packages/pi-amplike
 	url = https://github.com/pasky/pi-amplike.git
+	branch = main
 [submodule "packages/pi-sub"]
 	path = packages/pi-sub
 	url = https://github.com/pasky/pi-sub.git
@@ -12,12 +13,16 @@
 [submodule "packages/pi-blindtest"]
 	path = packages/pi-blindtest
 	url = git@github.com:pasky/pi-blindtest.git
+	branch = main
 [submodule "packages/pi-side-agents"]
 	path = packages/pi-side-agents
 	url = git@github.com:pasky/pi-side-agents.git
+	branch = main
 [submodule "packages/chrome-cdp-skill"]
 	path = packages/chrome-cdp-skill
 	url = https://github.com/pasky/chrome-cdp-skill.git
+	branch = main
 [submodule "packages/pi-session-summary"]
 	path = packages/pi-session-summary
 	url = git@github.com:pasky/pi-session-summary.git
+	branch = main
