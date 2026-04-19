@@ -43,7 +43,7 @@
     "dividerFooterJoin": false,
     "showTopDivider": false,
     "showBottomDivider": false,
-    "paddingLeft": 1,
+    "paddingLeft": 0,
     "paddingRight": 1,
     "widgetPlacement": "status",
     "showContextBar": true,
