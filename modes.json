@@ -19,7 +19,7 @@
     },
     "deep": {
       "provider": "openai-codex",
-      "modelId": "gpt-5.4",
+      "modelId": "gpt-5.5",
       "thinkingLevel": "xhigh"
     },
     "local": {
