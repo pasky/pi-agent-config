@@ -1,21 +1,16 @@
 {
   "version": 1,
-  "currentMode": "normal",
+  "currentMode": "smart",
   "modes": {
     "rush": {
       "provider": "openai-codex",
-      "modelId": "gpt-5.3-codex",
+      "modelId": "gpt-5.5",
       "thinkingLevel": "low"
-    },
-    "normal": {
-      "provider": "anthropic",
-      "modelId": "claude-sonnet-4-6",
-      "thinkingLevel": "medium"
     },
     "smart": {
       "provider": "anthropic",
-      "modelId": "claude-opus-4-7",
-      "thinkingLevel": "medium"
+      "modelId": "claude-opus-4-8",
+      "thinkingLevel": "high"
     },
     "deep": {
       "provider": "openai-codex",
