@@ -6,6 +6,10 @@ import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-age
 const PROMPT_DIR = join(homedir(), ".pi", "agent", "system-prompts");
 
 const TAIL_MARKERS = [
+	// pi >=0.79 emits project context (AGENTS.md/CLAUDE.md) under this XML block
+	// for custom prompts. Must be listed so the split keeps it in the tail.
+	"\n\n<project_context>\n\n",
+	// Older pi versions used this markdown heading; kept for backward compat.
 	"\n\n# Project Context\n\n",
 	"\n\nThe following skills provide specialized instructions for specific tasks.",
 	"\nCurrent date: ",
