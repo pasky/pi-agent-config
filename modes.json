@@ -10,12 +10,12 @@
     "smart": {
       "provider": "anthropic",
       "modelId": "claude-opus-4-8",
-      "thinkingLevel": "high"
+      "thinkingLevel": "medium"
     },
     "deep": {
-      "provider": "openai-codex",
-      "modelId": "gpt-5.5",
-      "thinkingLevel": "xhigh"
+      "provider": "anthropic",
+      "modelId": "claude-fable-5",
+      "thinkingLevel": "high"
     },
     "local": {
       "provider": "llama",
