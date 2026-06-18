@@ -1,8 +1,9 @@
 {
-  "lastChangelogVersion": "0.78.1",
+  "lastChangelogVersion": "0.79.7",
+  "defaultProjectTrust": "always",
   "defaultProvider": "anthropic",
   "defaultModel": "claude-opus-4-8",
-  "defaultThinkingLevel": "medium",
+  "defaultThinkingLevel": "high",
   "enabledModels": [
     "anthropic/claude-opus-4-8",
     "anthropic/claude-sonnet-4-6",
