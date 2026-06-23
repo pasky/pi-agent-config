@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "0.79.7",
+  "lastChangelogVersion": "0.79.10",
   "defaultProjectTrust": "always",
   "defaultProvider": "anthropic",
   "defaultModel": "claude-opus-4-8",
@@ -20,6 +20,7 @@
     "packages/chrome-cdp-skill"
   ],
   "extensions": [
-    "extensions/tps.ts"
+    "extensions/tps.ts",
+    "extensions/review.ts"
   ]
 }
