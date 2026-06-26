@@ -66,7 +66,7 @@ test("parseReviewArgs: defaults", () => {
 	assert.deepEqual(parseReviewArgs(""), {
 		modeOpt: undefined,
 		since: "HEAD~1",
-		prompt: "review changes since HEAD~1 carefully - analyze, debate and challenge",
+		prompt: "review changes since HEAD~1 carefully (both form and substance) - analyze, critique, debate and challenge",
 	});
 });
 

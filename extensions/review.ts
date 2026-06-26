@@ -14,14 +14,7 @@
  * from a separate reviewer. Follow up with e.g. "consider the review above".
  */
 
-import type { AgentTool } from "@mariozechner/pi-agent-core";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import {
-	createBashTool,
-	createEditTool,
-	createReadTool,
-	createWriteTool,
-} from "@mariozechner/pi-coding-agent";
 
 import { resolveModelAndThinking } from "../packages/pi-amplike/extensions/lib/mode-utils.js";
 import { type SingleResult, renderResults, runSubagent } from "../packages/pi-amplike/extensions/lib/subagent-core.js";
@@ -60,7 +53,7 @@ export function parseReviewArgs(
 			prompt = (m[2] || "").trim();
 		}
 	}
-	if (!prompt) prompt = `review changes since ${since} carefully - analyze, debate and challenge`;
+	if (!prompt) prompt = `review changes since ${since} carefully (both form and substance) - analyze, critique, debate and challenge`;
 	return { modeOpt, since, prompt };
 }
 
@@ -170,37 +163,24 @@ export default function (pi: ExtensionAPI) {
 				"```",
 			].join("\n");
 
-			const tools: AgentTool<any>[] = [
-				createReadTool(ctx.cwd),
-				createBashTool(ctx.cwd),
-				createEditTool(ctx.cwd),
-				createWriteTool(ctx.cwd),
-			];
-			const systemPrompt = ctx.getSystemPrompt();
-			const apiKeyResolver = async (_provider: string) => {
-				const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
-				return auth.ok ? auth.apiKey : undefined;
-			};
-
 			// --- Run the subagent, live progress in a widget. Always clear the
 			// widget afterwards (even on throw/abort) so it can never get stuck. ---
 			ctx.ui.setWidget(WIDGET_KEY, [`⏳ review ${range} (${model.provider}/${model.id})...`], { placement: "aboveEditor" });
 			let result: SingleResult;
 			try {
-				result = await runSubagent(
-					systemPrompt,
-					task,
-					tools,
+				result = await runSubagent({
+					cwd: ctx.cwd,
+					modelRegistry: ctx.modelRegistry,
 					model,
 					thinkingLevel,
-					apiKeyResolver,
-					ctx.signal,
-					(r) => ctx.ui.setWidget(
+					task,
+					signal: ctx.signal,
+					onProgress: (r) => ctx.ui.setWidget(
 						WIDGET_KEY,
 						(_tui, theme) => renderResults([r], { expanded: false, label: `review ${range}` }, theme),
 						{ placement: "aboveEditor" },
 					),
-				);
+				});
 			} finally {
 				ctx.ui.setWidget(WIDGET_KEY, undefined);
 			}
@@ -232,6 +212,8 @@ export default function (pi: ExtensionAPI) {
 			});
 
 			// Permanent transcript block (rich render via details + renderer above).
+			// triggerTurn: true so the main session model automatically responds to
+			// the finalized review (e.g. acting on the reviewer's findings).
 			pi.sendMessage<ReviewDetails>(
 				{
 					customType: REVIEW_TYPE,
@@ -239,7 +221,7 @@ export default function (pi: ExtensionAPI) {
 					display: true,
 					details: { range, result },
 				},
-				{ triggerTurn: false },
+				{ triggerTurn: true },
 			);
 		},
 	});
