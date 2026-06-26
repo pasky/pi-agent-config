@@ -344,6 +344,23 @@ const dbg = (...a: unknown[]) => {
 	if (DEBUG) console.error("[advisor]", ...a);
 };
 const IMMUNE_TURNS = 3;
+
+// Set by the handoff extension (pi-amplike) via the same Symbol.for key while a
+// handoff is in flight — from the moment it becomes pending until the new
+// session's prompt has been dispatched. During that window the primary session
+// is being torn down / replaced and its deferred handoff prompt is racing to be
+// sent, so the advisor must not inject messages or (worse) trigger an
+// autonomous turn: doing so either crashes the handoff ("Agent is already
+// processing") or leaks a stray advisory into the brand-new session.
+const HANDOFF_IN_PROGRESS_KEY = Symbol.for("pi-amplike-handoff-in-progress");
+function handoffInProgress(): boolean {
+	return !!(globalThis as any)[HANDOFF_IN_PROGRESS_KEY];
+}
+
+// Emitted by the handoff extension after its tool path replaces the session
+// transcript via the low-level sessionManager.newSession() (which emits no
+// session_start). Must match HANDOFF_SESSION_REPLACED_CHANNEL in handoff.ts.
+const HANDOFF_SESSION_REPLACED_CHANNEL = "pi-amplike:handoff-session-replaced";
 const DEFAULT_ADVISOR_PROVIDER = "openrouter";
 const DEFAULT_ADVISOR_MODEL = "z-ai/glm-5.2";
 const DEFAULT_THINKING = "low";
@@ -402,6 +419,13 @@ export default function (pi: ExtensionAPI) {
 
 	// ---- advice delivery into the primary session ----
 	function deliverAdvice(note: string, severity?: AdvisorSeverity): void {
+		// Stand down entirely while a handoff is being performed (see comment on
+		// HANDOFF_IN_PROGRESS_KEY). Drop the note rather than queue it: by the time
+		// the new session exists this advice refers to the old, replaced transcript.
+		if (handoffInProgress()) {
+			dbg("handoff in progress, dropping advice", severity, JSON.stringify(note).slice(0, 80));
+			return;
+		}
 		const channel = deliveryChannelFor(severity, isImmuneTurn(turnsCompleted, immuneUntil));
 		dbg("deliverAdvice", severity, "->", channel, JSON.stringify(note).slice(0, 120));
 		const notes: AdvisorNote[] = [{ note, severity }];
@@ -427,6 +451,18 @@ export default function (pi: ExtensionAPI) {
 		runtime = undefined;
 		activeModelLabel = undefined;
 		builtForCwd = undefined;
+		pendingUserPrompt = undefined;
+		turnsCompleted = 0;
+		immuneUntil = 0;
+	}
+
+	// Re-prime for a replaced transcript without tearing down the advisor agent:
+	// clear its context so the next delta replays fresh, and reset the per-session
+	// turn counters that drive the interrupt immune-cooldown. Used by both the
+	// session_start handler and the handoff session-replaced signal so the two
+	// paths can't drift.
+	function resetAdvisorState(): void {
+		runtime?.reset();
 		pendingUserPrompt = undefined;
 		turnsCompleted = 0;
 		immuneUntil = 0;
@@ -510,12 +546,13 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_start", (event) => {
 		// new/resume/fork replace history; a plain startup/reload keeps it.
 		if (event.reason === "new" || event.reason === "resume" || event.reason === "fork") {
-			if (runtime) runtime.reset();
-			pendingUserPrompt = undefined;
-			turnsCompleted = 0;
-			immuneUntil = 0;
+			resetAdvisorState();
 		}
 	});
+
+	// Tool-path handoff replaces the transcript without a session_start event
+	// (low-level sessionManager.newSession()), so reset off this explicit signal.
+	pi.events.on(HANDOFF_SESSION_REPLACED_CHANNEL, () => resetAdvisorState());
 
 	pi.on("session_shutdown", () => teardown());
 
