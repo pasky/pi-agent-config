@@ -85,19 +85,19 @@ test("isImmuneTurn: half-open fence", () => {
 });
 
 test("deliveryChannelFor: nit/omitted ride the non-interrupting aside", () => {
-	assert.equal(A.deliveryChannelFor(undefined, false), "nextTurn");
-	assert.equal(A.deliveryChannelFor("nit", false), "nextTurn");
-	assert.equal(A.deliveryChannelFor("nit", true), "nextTurn");
+	assert.equal(A.deliveryChannelFor(undefined, false), "aside");
+	assert.equal(A.deliveryChannelFor("nit", false), "aside");
+	assert.equal(A.deliveryChannelFor("nit", true), "aside");
 });
 
-test("deliveryChannelFor: concern/blocker steer when not immune", () => {
-	assert.equal(A.deliveryChannelFor("concern", false), "steer");
-	assert.equal(A.deliveryChannelFor("blocker", false), "steer");
+test("deliveryChannelFor: concern/blocker interrupt when not immune", () => {
+	assert.equal(A.deliveryChannelFor("concern", false), "interrupt");
+	assert.equal(A.deliveryChannelFor("blocker", false), "interrupt");
 });
 
 test("deliveryChannelFor: immune cooldown downgrades interrupts to aside", () => {
-	assert.equal(A.deliveryChannelFor("concern", true), "nextTurn");
-	assert.equal(A.deliveryChannelFor("blocker", true), "nextTurn");
+	assert.equal(A.deliveryChannelFor("concern", true), "aside");
+	assert.equal(A.deliveryChannelFor("blocker", true), "aside");
 });
 
 test("parseAdvisorTestArgs: valid severities + multiword note", () => {
@@ -324,7 +324,7 @@ class RpcPi {
 }
 
 if (process.env.ADVISOR_E2E) {
-	test("E2E: nit is non-interrupting, then rides the next turn", async () => {
+	test("E2E: nit is non-interrupting but lands immediately (not deferred)", async () => {
 		const pi = new RpcPi();
 		try {
 			await pi.sleep(2500);
@@ -332,11 +332,9 @@ if (process.env.ADVISOR_E2E) {
 			pi.prompt("/advisor test nit NITSENTINEL tidy later");
 			await pi.sleep(4000);
 			assert.equal(pi.agentStarts, before, "nit must NOT trigger an agent turn");
-			assert.ok(!JSON.stringify(await pi.getMessages()).includes("NITSENTINEL"), "nit stays pending while idle");
-			// a real turn flushes the pending nextTurn advisory into the transcript
-			pi.prompt("reply with the single word: hi");
-			await pi.waitFor(() => pi.agentEnds >= 1, 60000, "flush turn end");
-			assert.ok(JSON.stringify(await pi.getMessages()).includes("NITSENTINEL"), "nit advisory rides the next turn into the transcript");
+			// regression: the nit must land in the transcript right away (idle aside),
+			// NOT sit deferred until the next user message (the old nextTurn bug).
+			assert.ok(JSON.stringify(await pi.getMessages()).includes("NITSENTINEL"), "nit advisory lands immediately while idle");
 		} finally {
 			pi.kill();
 		}
@@ -388,10 +386,8 @@ if (process.env.ADVISOR_E2E) {
 			pi.prompt("/advisor test concern IMMUNECONCERN should be downgraded");
 			await pi.sleep(5000);
 			assert.equal(pi.agentStarts, c0, "concern during immune cooldown must be downgraded to a non-interrupting aside");
-			// flush: the downgraded (nextTurn) concern rides the following real turn
-			pi.prompt("reply with the single word: ok");
-			await pi.waitFor(() => pi.agentEnds >= 2, 60000, "flush turn end");
-			assert.ok(JSON.stringify(await pi.getMessages()).includes("IMMUNECONCERN"), "downgraded concern rides the next turn into the transcript");
+			// downgraded aside lands immediately in the transcript (no new turn)
+			assert.ok(JSON.stringify(await pi.getMessages()).includes("IMMUNECONCERN"), "downgraded concern lands immediately as an aside");
 		} finally {
 			pi.kill();
 		}

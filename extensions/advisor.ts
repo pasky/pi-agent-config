@@ -7,9 +7,10 @@
  * openrouter/z-ai/glm-5.2 (override via an "advisor" entry in modes.json).
  *
  * Severity routing:
- *   nit      → injected non-interrupting at the next turn boundary
- *   concern  → steered into the agent (interrupting)
- *   blocker  → steered into the agent (interrupting)
+ *   nit      → non-interrupting aside: folds in at the next step boundary while
+ *              the agent is streaming, or lands immediately when idle
+ *   concern  → steered into the agent (interrupting; triggers a turn when idle)
+ *   blocker  → steered into the agent (interrupting; triggers a turn when idle)
  *
  * After an interrupting note, further concern/blocker notes are downgraded to
  * non-interrupting asides for `IMMUNE_TURNS` primary turns (anti-spam).
@@ -47,8 +48,16 @@ export interface AdvisorNote {
 	severity?: AdvisorSeverity;
 }
 
-/** Delivery channel for an advisory: a non-interrupting aside vs. an interrupting steer. */
-export type AdvisorChannel = "nextTurn" | "steer";
+/**
+ * Delivery channel for an advisory:
+ *  - `aside`: non-interrupting. Folds in at the next step boundary while the
+ *    agent is streaming, or lands in the transcript immediately when idle. Never
+ *    deferred/batched (the old `nextTurn` path piled nits onto the next user
+ *    message, where they arrived stale after the agent had moved on).
+ *  - `interrupt`: steers into the run and, when idle, triggers a turn so the
+ *    advice is acted on promptly.
+ */
+export type AdvisorChannel = "aside" | "interrupt";
 
 // ---- advise tool (agent-core tool; lives only on the advisor agent) ----
 
@@ -72,14 +81,14 @@ export const isInterrupting = (s: AdvisorSeverity | undefined): boolean => s ===
 export const isImmuneTurn = (turnsCompleted: number, immuneUntil: number): boolean => turnsCompleted < immuneUntil;
 
 /**
- * Pure routing: which channel an advisory takes. `nit` (and omitted) always ride
- * the non-interrupting `nextTurn` aside. `concern`/`blocker` interrupt via `steer`
- * — unless an immune-turn cooldown is active, in which case they degrade to an
- * aside so a recent interrupt isn't immediately followed by another.
+ * Pure routing: which channel an advisory takes. `nit` (and omitted) ride the
+ * non-interrupting `aside`. `concern`/`blocker` `interrupt` — unless an
+ * immune-turn cooldown is active, in which case they degrade to an aside so a
+ * recent interrupt isn't immediately followed by another.
  */
 export function deliveryChannelFor(severity: AdvisorSeverity | undefined, immune: boolean): AdvisorChannel {
-	if (!isInterrupting(severity) || immune) return "nextTurn";
-	return "steer";
+	if (!isInterrupting(severity) || immune) return "aside";
+	return "interrupt";
 }
 
 /** Parse the hidden `/advisor test <nit|concern|blocker> <note>` test hook args. */
@@ -399,11 +408,17 @@ export default function (pi: ExtensionAPI) {
 		const content = formatAdvisoryContent(notes);
 		const message = { customType: ADVISORY_TYPE, content, display: true, details: { notes } };
 
-		if (channel === "steer") {
+		if (channel === "interrupt") {
 			immuneUntil = turnsCompleted + IMMUNE_TURNS;
+			// steer + triggerTurn: folds in at the next step boundary while streaming;
+			// triggers a turn to act on it when idle.
 			pi.sendMessage(message, { deliverAs: "steer", triggerTurn: true });
 		} else {
-			pi.sendMessage(message, { deliverAs: "nextTurn" });
+			// aside: steer WITHOUT triggerTurn. While streaming this folds in at the
+			// next step boundary (timely, non-interrupting); while idle pi drops it
+			// straight into the transcript. Crucially NOT `nextTurn`, which deferred
+			// nits to the next user message where they piled up and arrived stale.
+			pi.sendMessage(message, { deliverAs: "steer" });
 		}
 	}
 
