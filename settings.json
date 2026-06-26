@@ -21,6 +21,7 @@
   ],
   "extensions": [
     "extensions/tps.ts",
-    "extensions/review.ts"
+    "extensions/review.ts",
+    "extensions/advisor.ts"
   ]
 }

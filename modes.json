@@ -21,6 +21,11 @@
       "provider": "llama",
       "modelId": "qwen3.5-35b-a3b",
       "thinkingLevel": "minimal"
+    },
+    "advisor": {
+      "provider": "openrouter",
+      "modelId": "z-ai/glm-5.2",
+      "thinkingLevel": "low"
     }
   }
 }
