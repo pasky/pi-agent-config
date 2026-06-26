@@ -100,6 +100,36 @@ test("deliveryChannelFor: immune cooldown downgrades interrupts to aside", () =>
 	assert.equal(A.deliveryChannelFor("blocker", true), "aside");
 });
 
+test("dispositionFor: hold wins for lagging interrupts (even when immune)", () => {
+	// not lagging: same as deliveryChannelFor
+	assert.equal(A.dispositionFor("concern", false, false), "interrupt");
+	assert.equal(A.dispositionFor("blocker", false, false), "interrupt");
+	assert.equal(A.dispositionFor("concern", true, false), "aside"); // immune downgrade
+	// lagging interrupt → held, regardless of immune
+	assert.equal(A.dispositionFor("concern", false, true), "hold");
+	assert.equal(A.dispositionFor("blocker", false, true), "hold");
+	assert.equal(A.dispositionFor("blocker", true, true), "hold"); // hold > immune
+});
+
+test("dispositionFor: nits never hold (cheap, low-stakes)", () => {
+	assert.equal(A.dispositionFor(undefined, false, true), "aside");
+	assert.equal(A.dispositionFor("nit", false, true), "aside");
+	assert.equal(A.dispositionFor("nit", true, true), "aside");
+});
+
+test("formatReconfirmPreamble: empty when nothing held, else lists held notes", () => {
+	assert.equal(A.formatReconfirmPreamble([]), "");
+	const p = A.formatReconfirmPreamble([
+		{ note: "races on shared map", severity: "blocker" },
+		{ note: "missing await", severity: "concern" },
+	]);
+	assert.match(p, /Held advisories — reconfirm/);
+	assert.match(p, /call `advise` again/);
+	assert.match(p, /- \[BLOCKER\] races on shared map/);
+	assert.match(p, /- \[CONCERN\] missing await/);
+	assert.match(p, /\n---\n/); // separates preamble from the session update below
+});
+
 test("parseAdvisorTestArgs: valid severities + multiword note", () => {
 	assert.deepEqual(A.parseAdvisorTestArgs("test nit be tidy"), { severity: "nit", note: "be tidy" });
 	assert.deepEqual(A.parseAdvisorTestArgs("test  concern   wrong path here"), {
@@ -193,6 +223,142 @@ test("AdviseTool: records, dedups, and escalates by severity rank", async () => 
 	tool.resetDelivered();
 	await tool.execute("c6", { note: "guard empty array", severity: "nit" });
 	assert.equal(calls.length, 3);
+});
+
+test("AdviseTool: held notes (onAdvice→false) stay unrecorded so they can re-fire", async () => {
+	let deliver = false; // simulate "held" first, then "delivered"
+	const calls = [];
+	const tool = new A.AdviseTool((note, severity) => {
+		calls.push({ note, severity });
+		return deliver;
+	});
+
+	// first attempt held → tool reports held, dedup NOT recorded
+	const r1 = await tool.execute("h1", { note: "data race", severity: "blocker" });
+	assert.match(r1.content[0].text, /Held/);
+	assert.equal(r1.details.held, true);
+	assert.equal(calls.length, 1);
+
+	// same note re-raised while still held → onAdvice fires AGAIN (not deduped away)
+	await tool.execute("h2", { note: "data race", severity: "blocker" });
+	assert.equal(calls.length, 2);
+
+	// now it gets delivered → recorded
+	deliver = true;
+	const r3 = await tool.execute("h3", { note: "data race", severity: "blocker" });
+	assert.match(r3.content[0].text, /Recorded/);
+	assert.equal(calls.length, 3);
+
+	// once delivered, a same-severity repeat is deduped away
+	await tool.execute("h4", { note: "data race", severity: "blocker" });
+	assert.equal(calls.length, 3);
+});
+
+// ===========================================================================
+// 1b. runtime mechanics (offline, stub agent) — reconfirm-when-lagging
+//
+// Drives the real AdvisorRuntime + AdviseTool with a stub Agent so the
+// hold/reconfirm race is deterministic (a true E2E reconfirm would need the
+// live, nondeterministic advisor model; the /advisor test hook bypasses the
+// runtime/backlog entirely, so it can't exercise holding).
+// ===========================================================================
+
+// Wire a runtime the way the extension does: AdviseTool.onAdvice mirrors
+// deliverAdvice's hold decision (immune=false here). onPrompt(text, {rt,tool})
+// is invoked during each advisor review and simulates the advisor's reaction.
+function buildRuntimeHarness({ onPrompt } = {}) {
+	const delivered = [];
+	const prompts = [];
+	let rt;
+	const tool = new A.AdviseTool((note, severity) => {
+		const lagging = (rt?.backlog ?? 0) > 0;
+		const disp = A.dispositionFor(severity, false, lagging);
+		if (disp === "hold") {
+			rt.hold(note, severity);
+			return false;
+		}
+		delivered.push({ note, severity, disp });
+		return true;
+	});
+	const agent = {
+		state: { messages: [], model: {} },
+		async prompt(text) {
+			prompts.push(text);
+			await onPrompt?.(text, { rt, tool });
+			this.state.messages.push({ role: "assistant", content: [], usage: {}, stopReason: "stop" });
+		},
+		abort() {},
+		reset() {
+			this.state.messages = [];
+		},
+	};
+	rt = new A.AdvisorRuntime(agent, tool, 0);
+	return { rt, tool, delivered, prompts };
+}
+
+async function settle(rt) {
+	for (let i = 0; i < 400; i++) {
+		if (rt.idle) return;
+		await new Promise((r) => setTimeout(r, 5));
+	}
+	throw new Error("runtime did not settle");
+}
+
+test("runtime: a lone (non-lagging) turn delivers an interrupt immediately", async () => {
+	const h = buildRuntimeHarness({
+		onPrompt: async (_text, { tool }) => {
+			await tool.execute("x", { note: "unbounded recursion", severity: "blocker" });
+		},
+	});
+	h.rt.push("Turn 1: agent wrote a recursive fn");
+	await settle(h.rt);
+	assert.equal(h.prompts.length, 1);
+	assert.equal(h.delivered.length, 1, "non-lagging blocker is delivered, not held");
+	assert.equal(h.delivered[0].disp, "interrupt");
+});
+
+test("runtime: blocker raised while lagging is HELD, then delivered on reconfirm", async () => {
+	let call = 0;
+	const h = buildRuntimeHarness({
+		onPrompt: async (text, { rt, tool }) => {
+			call++;
+			if (call === 1) {
+				// a fresher turn lands mid-review (now lagging), THEN advisor flags it
+				rt.push("Turn 2: agent kept editing");
+				const r = await tool.execute("a1", { note: "off-by-one in loop", severity: "blocker" });
+				assert.match(r.content[0].text, /Held/, "flagged-while-lagging note is held");
+			} else if (call === 2) {
+				// reconfirm review: issue still stands → re-raise (now caught up)
+				assert.match(text, /Held advisories/, "reconfirm preamble rides the next review");
+				await tool.execute("a2", { note: "off-by-one in loop", severity: "blocker" });
+			}
+		},
+	});
+	h.rt.push("Turn 1: agent wrote a loop");
+	await settle(h.rt);
+	assert.equal(h.prompts.length, 2, "two reviews: original + reconfirm");
+	assert.match(h.prompts[1], /off-by-one in loop/, "held note text appears in reconfirm preamble");
+	assert.equal(h.delivered.length, 1, "blocker delivered exactly once, after reconfirm");
+	assert.equal(h.delivered[0].severity, "blocker");
+});
+
+test("runtime: held blocker is DROPPED when the reconfirm review stays silent", async () => {
+	let call = 0;
+	const h = buildRuntimeHarness({
+		onPrompt: async (_text, { rt, tool }) => {
+			call++;
+			if (call === 1) {
+				rt.push("Turn 2: agent already fixed it");
+				await tool.execute("a1", { note: "off-by-one in loop", severity: "blocker" });
+			}
+			// call 2: agent fixed it → advisor says nothing → held note evaporates
+		},
+	});
+	h.rt.push("Turn 1: agent wrote a loop");
+	await settle(h.rt);
+	assert.equal(h.prompts.length, 2);
+	assert.match(h.prompts[1], /Held advisories/, "reconfirm was still offered");
+	assert.equal(h.delivered.length, 0, "silent reconfirm drops the stale note");
 });
 
 // ===========================================================================

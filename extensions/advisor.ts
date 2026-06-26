@@ -15,6 +15,13 @@
  * After an interrupting note, further concern/blocker notes are downgraded to
  * non-interrupting asides for `IMMUNE_TURNS` primary turns (anti-spam).
  *
+ * Reconfirm-when-lagging: an interrupting note raised while fresher turns have
+ * already arrived (advisor reviewing turn N while N+1/N+2 are queued) is *held*
+ * rather than delivered — the agent may have already fixed it. The held note is
+ * piggybacked as a reconfirm preamble onto the next review; if it still applies
+ * the advisor re-raises it (now caught up → delivered), otherwise it stays
+ * silent and the note is dropped. Costs no extra model calls.
+ *
  * An optional WATCHDOG.md in the cwd is appended to the advisor's system prompt
  * (advisor-only guidance: review priorities, project traps).
  */
@@ -59,6 +66,13 @@ export interface AdvisorNote {
  */
 export type AdvisorChannel = "aside" | "interrupt";
 
+/**
+ * What to do with an advisory: an `AdvisorChannel` to deliver now, or `hold` to
+ * suppress it (interrupting note raised while fresher turns already arrived) and
+ * re-offer it on the next review for reconfirmation.
+ */
+export type AdvisorDisposition = AdvisorChannel | "hold";
+
 // ---- advise tool (agent-core tool; lives only on the advisor agent) ----
 
 const adviseSchema = Type.Object({
@@ -91,6 +105,43 @@ export function deliveryChannelFor(severity: AdvisorSeverity | undefined, immune
 	return "interrupt";
 }
 
+/**
+ * Full delivery decision. Precedence: `hold` > immune-downgrade > `interrupt`.
+ * An interrupting note that is `lagging` (fresher turns already queued behind
+ * the batch under review) is held — the agent may have already addressed it, so
+ * we suppress and reconfirm on the next review rather than steer in stale advice.
+ * Holding wins even over the immune path: a downgraded-but-stale concern is still
+ * wrong noise. Nits never hold (cheap, low-stakes).
+ */
+export function dispositionFor(
+	severity: AdvisorSeverity | undefined,
+	immune: boolean,
+	lagging: boolean,
+): AdvisorDisposition {
+	if (isInterrupting(severity) && lagging) return "hold";
+	return deliveryChannelFor(severity, immune);
+}
+
+/**
+ * Render held advisories as a reconfirm preamble prepended to the next review.
+ * Empty string when nothing is held.
+ */
+export function formatReconfirmPreamble(held: readonly AdvisorNote[]): string {
+	if (!held.length) return "";
+	const items = held.map((n) => `- [${(n.severity ?? "nit").toUpperCase()}] ${n.note}`).join("\n");
+	return [
+		"### Held advisories — reconfirm",
+		"",
+		"You raised these while the agent was mid-stream; they were held back because newer activity had already arrived and may have already addressed them. Re-check each against the latest activity below.",
+		"For every item that STILL applies, call `advise` again with the same severity. Say nothing for the rest — silence drops them.",
+		"",
+		items,
+		"",
+		"---",
+		"",
+	].join("\n");
+}
+
 /** Parse the hidden `/advisor test <nit|concern|blocker> <note>` test hook args. */
 export function parseAdvisorTestArgs(args: string): { severity: AdvisorSeverity; note: string } | null {
 	const m = args.trim().match(/^test\s+(nit|concern|blocker)\s+([\s\S]+)$/i);
@@ -101,7 +152,9 @@ export function parseAdvisorTestArgs(args: string): { severity: AdvisorSeverity;
 /**
  * The advise tool. Dedupes by normalized note text + severity rank: a repeat at
  * the same-or-lower severity is dropped, a real escalation (nit→concern→blocker)
- * passes through.
+ * passes through. Dedup is recorded only when the note is actually *delivered*
+ * (`onAdvice` returns true) — a note that is held for reconfirmation returns
+ * false and is left unrecorded so it can re-fire and land once it's confirmed.
  */
 export class AdviseTool {
 	readonly name = "advise";
@@ -111,7 +164,9 @@ export class AdviseTool {
 	readonly parameters = adviseSchema as any;
 	#delivered = new Map<string, number>();
 
-	constructor(private readonly onAdvice: (note: string, severity?: AdvisorSeverity) => void) {}
+	// onAdvice returns true if the note was delivered, false if it was held back
+	// (lagging interrupt) and should be re-offered later.
+	constructor(private readonly onAdvice: (note: string, severity?: AdvisorSeverity) => boolean) {}
 
 	resetDelivered(): void {
 		this.#delivered.clear();
@@ -124,8 +179,12 @@ export class AdviseTool {
 		if (rank <= prev) {
 			return { content: [{ type: "text", text: "Duplicate advice ignored." }], details: { ...args, dropped: true } };
 		}
+		const delivered = this.onAdvice(args.note, args.severity);
+		if (!delivered) {
+			// Held for reconfirmation: leave undealt so it can re-fire and land later.
+			return { content: [{ type: "text", text: "Held pending reconfirmation." }], details: { ...args, held: true } };
+		}
 		this.#delivered.set(key, rank);
-		this.onAdvice(args.note, args.severity);
 		return { content: [{ type: "text", text: "Recorded." }], details: { ...args } };
 	}
 }
@@ -226,8 +285,9 @@ function buildAdvisorAgent(opts: {
  * any history rewrite) the caller invokes `reset()`, which clears the advisor's
  * own context so the next delta replays fresh.
  */
-class AdvisorRuntime {
+export class AdvisorRuntime {
 	#pending: string[] = [];
+	#held: AdvisorNote[] = [];
 	#busy = false;
 	#backlog = 0;
 	#failures = 0;
@@ -243,6 +303,20 @@ class AdvisorRuntime {
 
 	get backlog(): number {
 		return this.#backlog;
+	}
+
+	/** True when no batch is in flight and nothing is queued (test/idle probe). */
+	get idle(): boolean {
+		return !this.#busy && this.#pending.length === 0;
+	}
+
+	/**
+	 * Stash an interrupting note that arrived while lagging. It will be re-offered
+	 * to the advisor as a reconfirm preamble on the next review (see `#drain`).
+	 */
+	hold(note: string, severity?: AdvisorSeverity): void {
+		if (this.disposed) return;
+		this.#held.push({ note, severity });
 	}
 
 	get usage(): { input: number; output: number; cost: number; contextTokens: number; contextPercent: number | null } {
@@ -277,6 +351,7 @@ class AdvisorRuntime {
 	reset(): void {
 		this.#epoch++;
 		this.#pending = [];
+		this.#held = [];
 		this.#backlog = 0;
 		this.#failures = 0;
 		this.adviseTool.resetDelivered();
@@ -292,6 +367,7 @@ class AdvisorRuntime {
 		this.disposed = true;
 		this.#epoch++;
 		this.#pending = [];
+		this.#held = [];
 		this.#backlog = 0;
 		try {
 			this.agent.abort();
@@ -305,25 +381,34 @@ class AdvisorRuntime {
 			while (!this.disposed && this.#pending.length) {
 				const batch = this.#pending.splice(0);
 				const turns = batch.length;
+				// Decrement at *take* time so that while this batch is under review,
+				// `backlog > 0` means strictly-fresher turns have already arrived — the
+				// lag signal `deliverAdvice` reads to decide whether to hold an interrupt.
+				this.#backlog = Math.max(0, this.#backlog - turns);
 				const epoch = this.#epoch;
+				// Pull any held notes; they ride this review as a reconfirm preamble.
+				const held = this.#held.splice(0);
+				const preamble = formatReconfirmPreamble(held);
 				const prompt = batch.join("\n\n---\n\n");
 				try {
-					this.onDebug?.("prompting advisor agent, delta chars=", prompt.length);
-					await this.agent.prompt(`### Session update\n\n${prompt}`);
+					this.onDebug?.("prompting advisor agent, delta chars=", prompt.length, "held=", held.length);
+					await this.agent.prompt(`### Session update\n\n${preamble}${prompt}`);
 					const last = this.agent.state.messages[this.agent.state.messages.length - 1] as AssistantMessage;
 					this.onDebug?.("advisor turn done, stop=", last?.stopReason, "err=", last?.errorMessage ?? "-");
 					this.#failures = 0;
-					if (this.#epoch === epoch) this.#backlog = Math.max(0, this.#backlog - turns);
 				} catch (e) {
 					this.onDebug?.("advisor prompt threw", String(e));
-					// A reset/dispose aborts the in-flight prompt; drop the stale batch.
+					// A reset/dispose aborts the in-flight prompt; drop the stale batch
+					// (and its held preamble — reset() already cleared everything).
 					if (this.#epoch !== epoch) continue;
 					this.#failures++;
 					if (this.#failures >= 3) {
 						this.#failures = 0;
-						this.#backlog = Math.max(0, this.#backlog - turns);
 					} else {
+						// Re-queue the batch and held notes; restore the take-time decrement.
 						this.#pending.unshift(...batch);
+						this.#held.unshift(...held);
+						this.#backlog += turns;
 						await new Promise((r) => setTimeout(r, this.retryDelayMs));
 					}
 				}
@@ -418,21 +503,36 @@ export default function (pi: ExtensionAPI) {
 	let immuneUntil = 0;
 
 	// ---- advice delivery into the primary session ----
-	function deliverAdvice(note: string, severity?: AdvisorSeverity): void {
+	// Returns true if the note was delivered, false if it was held back for
+	// reconfirmation (so AdviseTool leaves it unrecorded and it can re-fire).
+	function deliverAdvice(note: string, severity?: AdvisorSeverity): boolean {
 		// Stand down entirely while a handoff is being performed (see comment on
 		// HANDOFF_IN_PROGRESS_KEY). Drop the note rather than queue it: by the time
 		// the new session exists this advice refers to the old, replaced transcript.
+		// Report it as "delivered" so it isn't held/retried into the new session.
 		if (handoffInProgress()) {
 			dbg("handoff in progress, dropping advice", severity, JSON.stringify(note).slice(0, 80));
-			return;
+			return true;
 		}
-		const channel = deliveryChannelFor(severity, isImmuneTurn(turnsCompleted, immuneUntil));
-		dbg("deliverAdvice", severity, "->", channel, JSON.stringify(note).slice(0, 120));
+		const immune = isImmuneTurn(turnsCompleted, immuneUntil);
+		// Lag: fresher turns have already arrived behind the batch under review (see
+		// the take-time backlog decrement in AdvisorRuntime.#drain). When idle / under
+		// the /advisor test hook there is no runtime, so backlog is 0 → never lagging.
+		const lagging = (runtime?.backlog ?? 0) > 0;
+		const disposition = dispositionFor(severity, immune, lagging);
+		dbg("deliverAdvice", severity, "immune=", immune, "lagging=", lagging, "->", disposition, JSON.stringify(note).slice(0, 120));
+
+		if (disposition === "hold") {
+			// Suppress now; re-offer as a reconfirm preamble on the next review.
+			runtime?.hold(note, severity);
+			return false;
+		}
+
 		const notes: AdvisorNote[] = [{ note, severity }];
 		const content = formatAdvisoryContent(notes);
 		const message = { customType: ADVISORY_TYPE, content, display: true, details: { notes } };
 
-		if (channel === "interrupt") {
+		if (disposition === "interrupt") {
 			immuneUntil = turnsCompleted + IMMUNE_TURNS;
 			// steer + triggerTurn: folds in at the next step boundary while streaming;
 			// triggers a turn to act on it when idle.
@@ -444,6 +544,7 @@ export default function (pi: ExtensionAPI) {
 			// nits to the next user message where they piled up and arrived stale.
 			pi.sendMessage(message, { deliverAs: "steer" });
 		}
+		return true;
 	}
 
 	function teardown(): void {
