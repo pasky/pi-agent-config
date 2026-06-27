@@ -83,9 +83,9 @@ test("parseReviewArgs: since + prompt APPENDS to default", () => {
 	assert.equal(r.since, "main");
 	assert.equal(r.customPrompt, "focus on auth");
 	// custom prompt is appended to (not replacing) the default review prompt
-	assert.match(r.prompt, /since main/);
+	assert.ok(r.prompt.startsWith(defaultReviewPrompt("main")), "keeps default prefix");
 	assert.match(r.prompt, /focus on auth$/);
-	assert.equal(r.prompt, defaultReviewPrompt("main") + "\n\nfocus on auth");
+	assert.equal(r.prompt, composeReviewPrompt("main", "focus on auth"));
 });
 
 test("parseReviewArgs: -mode + since + prompt APPENDS", () => {
@@ -93,13 +93,16 @@ test("parseReviewArgs: -mode + since + prompt APPENDS", () => {
 	assert.equal(r.modeOpt, "deep");
 	assert.equal(r.since, "origin/dev");
 	assert.equal(r.customPrompt, "be ruthless");
-	assert.equal(r.prompt, defaultReviewPrompt("origin/dev") + "\n\nbe ruthless");
+	assert.equal(r.prompt, composeReviewPrompt("origin/dev", "be ruthless"));
 });
 
-test("composeReviewPrompt: no custom -> just default; custom -> appended", () => {
+test("composeReviewPrompt: no custom -> just default; custom -> augmented (default kept as prefix)", () => {
 	assert.equal(composeReviewPrompt("main"), defaultReviewPrompt("main"));
 	assert.equal(composeReviewPrompt("main", "  "), defaultReviewPrompt("main"));
-	assert.equal(composeReviewPrompt("main", "focus on X"), defaultReviewPrompt("main") + "\n\nfocus on X");
+	const withCustom = composeReviewPrompt("main", "focus on X");
+	assert.ok(withCustom.startsWith(defaultReviewPrompt("main")), "default stays as the baseline prefix");
+	assert.match(withCustom, /must not weaken or replace/);
+	assert.match(withCustom, /focus on X$/);
 });
 
 test("parseReviewArgs: -mode only falls back to default since", () => {

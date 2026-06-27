@@ -45,10 +45,15 @@ export function defaultReviewPrompt(since: string): string {
  * custom instructions APPENDED (so the user/model focus augments, not overrides,
  * the baseline review intent).
  */
+export const PROMPT_AUGMENT_PREFIX =
+	"Additionally (this augments, and must not weaken or replace, the baseline review above):";
+
 export function composeReviewPrompt(since: string, customPrompt?: string): string {
 	const base = defaultReviewPrompt(since);
 	const custom = (customPrompt || "").trim();
-	return custom ? `${base}\n\n${custom}` : base;
+	// Frame the custom text as an explicit augmentation so a conflicting later
+	// instruction can't be read as overriding the baseline review intent.
+	return custom ? `${base}\n\n${PROMPT_AUGMENT_PREFIX} ${custom}` : base;
 }
 
 /**
@@ -173,8 +178,11 @@ export default function (pi: ExtensionAPI) {
 		const { cwd, modelRegistry, model, thinkingLevel, modeOpt, since, prompt, parentSessionFile, signal, onProgress } = opts;
 
 		// --- Collect the commit log for the range ---
+		// `--end-of-options` so a `since` starting with `-` can't be smuggled in as a
+		// git option (e.g. `--output=...`) — important now that `since` is also
+		// model-supplied via the `review` tool.
 		const range = `${since}..`;
-		const log = await pi.exec("git", ["log", "--stat", range], { cwd });
+		const log = await pi.exec("git", ["log", "--stat", "--end-of-options", range], { cwd });
 		if (log.code !== 0) {
 			return { ok: false, error: `git log ${range} failed: ${(log.stderr || log.stdout).trim()}` };
 		}
@@ -324,6 +332,11 @@ export default function (pi: ExtensionAPI) {
 		].join(" "),
 		parameters: ReviewToolParams,
 
+		// Run sequentially: a review inspects repository state, so it must not race
+		// concurrent bash/write/edit tool calls in the same assistant turn. Marking
+		// this tool sequential forces the whole batch to run one-at-a-time.
+		executionMode: "sequential",
+
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			const since = (params.since || DEFAULT_SINCE).trim() || DEFAULT_SINCE;
 			const prompt = composeReviewPrompt(since, params.prompt);
@@ -335,8 +348,12 @@ export default function (pi: ExtensionAPI) {
 				pi.getThinkingLevel(),
 				{ mode: params.mode },
 			);
+			// Hard failures THROW: pi-agent-core only marks a tool result as an error
+			// when execute() throws — a returned `isError` flag is ignored (see
+			// executePreparedToolCall), so returning one would be reported to the model
+			// as a SUCCESSFUL call.
 			if (!model) {
-				return { content: [{ type: "text", text: "No model available." }], isError: true };
+				throw new Error("No model available for review.");
 			}
 
 			const range = `${since}..`;
@@ -358,10 +375,18 @@ export default function (pi: ExtensionAPI) {
 				}),
 			});
 
+			// git log failed (or other pre-subagent error): hard failure -> throw.
 			if (!outcome.ok) {
-				return { content: [{ type: "text", text: outcome.error }], isError: true };
+				throw new Error(outcome.error);
+			}
+			// Reviewer ran but produced nothing usable: surface as a thrown error too.
+			if (outcome.failed && !outcome.reviewText && outcome.result.displayItems.length === 0) {
+				throw new Error(`review failed: ${outcome.result.errorMessage || "unknown error"}`);
 			}
 
+			// Success, or an incomplete review WITH partial output: return the tagged
+			// content (its embedded status="incomplete" marker tells the model it did
+			// not finish). `isError` is set for forward-compat but not relied upon.
 			return {
 				content: [{ type: "text", text: outcome.contentText }],
 				details: { range: outcome.range, result: outcome.result },
