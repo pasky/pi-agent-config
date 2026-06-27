@@ -200,8 +200,8 @@ export class AdviseTool {
 	readonly parameters = adviseSchema as any;
 	#delivered = new Map<string, number>();
 
-	// onAdvice returns true if the note was delivered, false if it was held back
-	// (lagging interrupt) and should be re-offered later.
+	// onAdvice returns true if the note was delivered, false if it was held
+	// (high severity) and should be re-offered/reconfirmed later.
 	constructor(private readonly onAdvice: (note: string, severity?: AdvisorSeverity) => boolean) {}
 
 	resetDelivered(): void {
@@ -339,6 +339,8 @@ function buildAdvisorAgent(opts: {
 export class AdvisorRuntime {
 	#pending: string[] = [];
 	#held: AdvisorNote[] = [];
+	// Keys re-raised during the in-flight review; drives the post-review prune.
+	#reraised: Set<string> | undefined;
 	#settleWaiters: Array<() => void> = [];
 	#busy = false;
 	#backlog = 0;
@@ -371,11 +373,17 @@ export class AdvisorRuntime {
 	/**
 	 * Stash a high-severity note for reconfirmation. It rides the next review as a
 	 * reconfirm preamble (see `#drain`); survivors are taken via `takeHeld()` and
-	 * steered in by the catch-up block once the advisor settles.
+	 * steered in by the catch-up block once the advisor settles. Deduped by note
+	 * text so re-raising during a reconfirm doesn't pile up duplicates; the re-raise
+	 * is recorded so the post-review prune keeps it.
 	 */
 	hold(note: string, severity?: AdvisorSeverity): void {
 		if (this.disposed) return;
-		this.#held.push({ note, severity });
+		const key = dedupeKey(note);
+		this.#reraised?.add(key);
+		if (!this.#held.some((n) => dedupeKey(n.note) === key)) {
+			this.#held.push({ note, severity });
+		}
 	}
 
 	/** Remove and return the currently-held notes (the reconfirmation survivors). */
@@ -487,28 +495,42 @@ export class AdvisorRuntime {
 				// Rough gauge of how many turns are still unreviewed (status display only).
 				this.#backlog = Math.max(0, this.#backlog - turns);
 				const epoch = this.#epoch;
-				// Pull any held notes; they ride this review as a reconfirm preamble.
-				const held = this.#held.splice(0);
-				const preamble = formatReconfirmPreamble(held);
+				// Re-offer held notes as a reconfirm preamble WITHOUT removing them from
+				// #held: hasHeld/takeHeld must stay accurate while this review is in flight
+				// (the catch-up block reads them concurrently — `push()` runs `#drain` up to
+				// the first await, so a splice here would empty #held before the block even
+				// looks). After a successful review we prune any offered note the advisor
+				// did NOT re-raise (it's been resolved).
+				const offered = [...this.#held];
+				const offeredKeys = new Set(offered.map((n) => dedupeKey(n.note)));
+				const preamble = formatReconfirmPreamble(offered);
+				this.#reraised = new Set();
 				const prompt = batch.join("\n\n---\n\n");
 				try {
-					this.onDebug?.("prompting advisor agent, delta chars=", prompt.length, "held=", held.length);
+					this.onDebug?.("prompting advisor agent, delta chars=", prompt.length, "held=", offered.length);
 					await this.agent.prompt(`### Session update\n\n${preamble}${prompt}`);
+					// Prune recanted holds: offered notes the advisor stayed silent on.
+					for (const key of offeredKeys) {
+						if (!this.#reraised.has(key)) {
+							const i = this.#held.findIndex((n) => dedupeKey(n.note) === key);
+							if (i >= 0) this.#held.splice(i, 1);
+						}
+					}
+					this.#reraised = undefined;
 					const last = this.agent.state.messages[this.agent.state.messages.length - 1] as AssistantMessage;
 					this.onDebug?.("advisor turn done, stop=", last?.stopReason, "err=", last?.errorMessage ?? "-");
 					this.#failures = 0;
 				} catch (e) {
+					this.#reraised = undefined;
 					this.onDebug?.("advisor prompt threw", String(e));
-					// A reset/dispose aborts the in-flight prompt; drop the stale batch
-					// (and its held preamble — reset() already cleared everything).
+					// A reset/dispose aborts the in-flight prompt; drop the stale batch.
+					// Held notes were never removed, so nothing to restore there.
 					if (this.#epoch !== epoch) continue;
 					this.#failures++;
 					if (this.#failures >= 3) {
 						this.#failures = 0;
 					} else {
-						// Re-queue the batch and held notes; restore the take-time decrement.
 						this.#pending.unshift(...batch);
-						this.#held.unshift(...held);
 						this.#backlog += turns;
 						await new Promise((r) => setTimeout(r, this.retryDelayMs));
 					}

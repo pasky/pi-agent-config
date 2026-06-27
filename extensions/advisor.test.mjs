@@ -3,17 +3,20 @@
  * turn and injects advice). Mirrors review.test.mjs structure.
  *
  * Layers:
- *   1. pure logic        — routing, immune fence, arg parsing, advisory/​delta
- *                          formatting, AdviseTool dedup (no model/network/TUI)
+ *   1. pure logic        — severity helpers, backoff, terminal detection, arg
+ *                          parsing, advisory/​delta formatting, AdviseTool dedup
+ *                          (no model/network/TUI)
+ *   1b. runtime mechanics — always-hold + catch-up block: runTurnBlock branches
+ *                          (stub runtime) and the real AdvisorRuntime + stub
+ *                          Agent (hold → reconfirm → deliver/drop, settle waits)
  *   2. real loader       — the extension registers through pi's loader
  *   3. render path        — the advisory renderer shows notes by severity
- *   4. pi harness (E2E)  — drive a real `pi --mode rpc` and verify that delivery
- *                          actually interrupts/retriggers vs. stays quiet, and
- *                          that the immune-turn cooldown downgrades interrupts.
- *                          Gated behind ADVISOR_E2E=1 (needs anthropic auth +
- *                          network; spawns pi with ADVISOR_NO_REVIEW so the
- *                          advisor model never fires — only the deterministic
- *                          `/advisor test` delivery hook does).
+ *   4. pi harness (E2E)  — drive a real `pi --mode rpc` and verify a nit is
+ *                          delivered immediately and triggers a turn. Gated
+ *                          behind ADVISOR_E2E=1 (needs anthropic auth + network;
+ *                          spawns pi with ADVISOR_NO_REVIEW so the advisor model
+ *                          never fires — only the deterministic `/advisor test`
+ *                          nit hook does; high-sev needs the runtime, covered in 1b).
  *
  * Run:  node extensions/advisor.test.mjs              (fast, offline)
  *       ADVISOR_E2E=1 node extensions/advisor.test.mjs (also the pi harness)
@@ -375,8 +378,8 @@ function buildIntegration({ onReview } = {}) {
 			tool.markDelivered(n.note, n.severity);
 		}
 	};
-	const block = (terminal, consecutiveBlocks = 0) =>
-		A.runTurnBlock({ terminal, runtime: rt, consecutiveBlocks, notify: () => {}, deliverHeld });
+	const block = (terminal, opts = {}) =>
+		A.runTurnBlock({ terminal, runtime: rt, consecutiveBlocks: 0, notify: () => {}, deliverHeld, ...opts });
 	return { rt, tool, delivered, deliverHeld, block, getReviewCount: () => reviewCount };
 }
 
@@ -453,6 +456,54 @@ test("integration: held blocker is dropped when the reconfirm review recants", a
 	assert.equal(await h.block(true), 0);
 	assert.equal(h.delivered.length, 0, "recanted blocker is dropped, not delivered");
 	assert.equal(h.rt.hasHeld, false);
+});
+
+test("integration (regression): a held note survives push() and blocks + delivers mid-run", async () => {
+	// Regression for the synchronous-#drain-splice bug: push() runs the drain up to
+	// its first await, which must NOT empty #held — otherwise a non-terminal turn
+	// sees hasHeld=false and never blocks, deferring high-sev delivery to terminal.
+	const h = buildIntegration({
+		onReview: async (text, { tool, reviewCount }) => {
+			if (reviewCount === 1) await tool.execute("a1", { note: "races on cache", severity: "blocker" });
+			else if (reviewCount === 2) {
+				assert.match(text, /Held advisories/);
+				await tool.execute("a2", { note: "races on cache", severity: "blocker" }); // still applies
+			}
+		},
+	});
+	h.rt.push("turn 1");
+	await h.block(false);
+	await h.rt.waitUntilSettled(5000);
+	assert.equal(h.rt.hasHeld, true);
+	// turn 2 is NON-terminal; the held note must keep hasHeld true across push
+	h.rt.push("turn 2");
+	assert.equal(h.rt.hasHeld, true, "held note survives push() (no mid-flight splice)");
+	const cb = await h.block(false);
+	assert.equal(h.delivered.length, 1, "prior held blocker delivered mid-run, not deferred to terminal");
+	assert.equal(h.delivered[0].kind, "held");
+	assert.equal(cb, 0, "settled → streak reset");
+});
+
+test("integration (regression): terminal timeout delivers a held note stuck mid-reconfirm", async () => {
+	// Regression for Finding 2: a pre-existing held note must remain in #held while
+	// its reconfirm review is in flight, so a terminal timeout can still deliver it.
+	let releaseReview2;
+	const h = buildIntegration({
+		onReview: async (_text, { tool, reviewCount }) => {
+			if (reviewCount === 1) await tool.execute("a1", { note: "fd leak", severity: "blocker" });
+			else if (reviewCount === 2) await new Promise((r) => (releaseReview2 = r)); // hang past the timeout
+		},
+	});
+	h.rt.push("turn 1");
+	await h.block(false);
+	await h.rt.waitUntilSettled(5000);
+	assert.equal(h.rt.hasHeld, true);
+	h.rt.push("turn 2");
+	const cb = await h.block(true, { capMs: 30 }); // terminal, review 2 hangs → times out
+	assert.equal(h.delivered.length, 1, "pre-existing held note delivered best-effort on terminal timeout");
+	assert.equal(h.delivered[0].severity, "blocker");
+	assert.equal(cb, 0);
+	releaseReview2?.(); // let the hung review finish for a clean exit
 });
 
 test("runtime.waitUntilSettled: settles on drain, times out, and aborts", async () => {
