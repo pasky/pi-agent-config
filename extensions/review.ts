@@ -21,10 +21,23 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
-import { resolveModelAndThinking } from "../packages/pi-amplike/extensions/lib/mode-utils.js";
+import { inferCurrentMode, resolveModelAndThinking } from "../packages/pi-amplike/extensions/lib/mode-utils.js";
 import { type SingleResult, renderResults, runSubagent } from "../packages/pi-amplike/extensions/lib/subagent-core.js";
 
 const DEFAULT_SINCE = "HEAD~1";
+// When no -mode is given, the reviewer should be a fresh perspective from a
+// strong model: default to "deep" — unless the current session is already in
+// "deep" mode, in which case fall back to "smart" so we don't just clone the
+// same heavyweight setup.
+async function resolveDefaultReviewMode(
+	cwd: string,
+	currentModel: { provider?: string; id?: string } | undefined,
+	currentThinkingLevel: string,
+): Promise<string> {
+	const current = await inferCurrentMode(cwd, currentModel, currentThinkingLevel);
+	return current === "deep" ? "smart" : "deep";
+}
+
 const WIDGET_KEY = "review";
 const REVIEW_TYPE = "review-result";
 
@@ -240,12 +253,15 @@ export default function (pi: ExtensionAPI) {
 	pi.registerCommand("review", {
 		description: "Review git changes via a subagent, kept in the transcript + context (-mode <name>, [git-since] [prompt])",
 		handler: async (args, ctx) => {
-			const { modeOpt, since, prompt } = parseReviewArgs(args, DEFAULT_SINCE);
+			const { modeOpt: modeArg, since, prompt } = parseReviewArgs(args, DEFAULT_SINCE);
 
 			if (!ctx.model) {
 				ctx.ui.notify("No model selected.", "error");
 				return;
 			}
+
+			// No explicit -mode: default to deep (or smart if already in deep).
+			const modeOpt = modeArg ?? (await resolveDefaultReviewMode(ctx.cwd, ctx.model, pi.getThinkingLevel()));
 
 			// --- Resolve model/thinking from -mode (falls back to current) ---
 			const { model, thinkingLevel } = await resolveModelAndThinking(
@@ -341,12 +357,15 @@ export default function (pi: ExtensionAPI) {
 			const since = (params.since || DEFAULT_SINCE).trim() || DEFAULT_SINCE;
 			const prompt = composeReviewPrompt(since, params.prompt);
 
+			// No explicit mode: default to deep (or smart if already in deep).
+			const mode = params.mode ?? (await resolveDefaultReviewMode(ctx.cwd, ctx.model, pi.getThinkingLevel()));
+
 			const { model, thinkingLevel } = await resolveModelAndThinking(
 				ctx.cwd,
 				ctx.modelRegistry,
 				ctx.model,
 				pi.getThinkingLevel(),
-				{ mode: params.mode },
+				{ mode },
 			);
 			// Hard failures THROW: pi-agent-core only marks a tool result as an error
 			// when execute() throws — a returned `isError` flag is ignored (see
@@ -364,7 +383,7 @@ export default function (pi: ExtensionAPI) {
 				modelRegistry: ctx.modelRegistry,
 				model,
 				thinkingLevel,
-				modeOpt: params.mode,
+				modeOpt: mode,
 				since,
 				prompt,
 				parentSessionFile: ctx.sessionManager?.getSessionFile(),
