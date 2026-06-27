@@ -21,7 +21,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
-import { inferCurrentMode, resolveModelAndThinking } from "../packages/pi-amplike/extensions/lib/mode-utils.js";
+import { inferCurrentMode, loadModeSpec, resolveModelAndThinking } from "../packages/pi-amplike/extensions/lib/mode-utils.js";
 import { type SingleResult, renderResults, runSubagent } from "../packages/pi-amplike/extensions/lib/subagent-core.js";
 
 const DEFAULT_SINCE = "HEAD~1";
@@ -29,13 +29,21 @@ const DEFAULT_SINCE = "HEAD~1";
 // strong model: default to "deep" — unless the current session is already in
 // "deep" mode, in which case fall back to "smart" so we don't just clone the
 // same heavyweight setup.
+//
+// Returns the chosen mode name, or undefined if that mode isn't actually defined
+// in modes.json — in which case the caller should leave the mode unset (and let
+// the review run on the current model) rather than mislabel it as deep/smart.
+// The "already deep?" check uses an EXACT match (model + thinking level), so a
+// custom selection that merely shares deep's model isn't mistaken for deep.
 async function resolveDefaultReviewMode(
 	cwd: string,
 	currentModel: { provider?: string; id?: string } | undefined,
 	currentThinkingLevel: string,
-): Promise<string> {
-	const current = await inferCurrentMode(cwd, currentModel, currentThinkingLevel);
-	return current === "deep" ? "smart" : "deep";
+): Promise<string | undefined> {
+	const current = await inferCurrentMode(cwd, currentModel, currentThinkingLevel, { exact: true });
+	const candidate = current === "deep" ? "smart" : "deep";
+	// Only use it if it resolves to a real mode; otherwise stay unset.
+	return (await loadModeSpec(cwd, candidate)) ? candidate : undefined;
 }
 
 const WIDGET_KEY = "review";
