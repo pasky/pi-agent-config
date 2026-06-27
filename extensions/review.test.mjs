@@ -32,7 +32,7 @@ const { CustomMessageComponent } = await import(`${DIST}/modes/interactive/compo
 const { initTheme } = await import(`${DIST}/modes/interactive/theme/theme.js`);
 const { convertToLlm } = await import(`${DIST}/core/messages.js`);
 
-// review.ts has @mariozechner/* imports, so load it through jiti with the same
+// review.ts has @earendil-works/* imports, so load it through jiti with the same
 // aliases pi's extension loader uses, to reach its exported pure helpers.
 const piRequire = createRequire(`${DIST}/index.js`);
 const jitiDir = dirname(piRequire.resolve("jiti/package.json"));
@@ -42,13 +42,9 @@ const { createJiti } = await import(`${jitiDir}/lib/jiti-static.mjs`);
 const pkgEntry = (pkg) => resolve(DIST, "..", "node_modules", "@earendil-works", pkg, "dist/index.js");
 const ALIAS = {
 	"@earendil-works/pi-coding-agent": `${DIST}/index.js`,
-	"@mariozechner/pi-coding-agent": `${DIST}/index.js`,
 	"@earendil-works/pi-agent-core": pkgEntry("pi-agent-core"),
-	"@mariozechner/pi-agent-core": pkgEntry("pi-agent-core"),
 	"@earendil-works/pi-tui": pkgEntry("pi-tui"),
-	"@mariozechner/pi-tui": pkgEntry("pi-tui"),
 	"@earendil-works/pi-ai": pkgEntry("pi-ai"),
-	"@mariozechner/pi-ai": pkgEntry("pi-ai"),
 };
 const jiti = createJiti(import.meta.url, { moduleCache: false, alias: ALIAS });
 const { parseReviewArgs, buildReviewContent } = await jiti.import(resolve(AGENT_DIR, "extensions/review.ts"));

@@ -14,7 +14,7 @@
  * from a separate reviewer. Follow up with e.g. "consider the review above".
  */
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { resolveModelAndThinking } from "../packages/pi-amplike/extensions/lib/mode-utils.js";
 import { type SingleResult, renderResults, runSubagent } from "../packages/pi-amplike/extensions/lib/subagent-core.js";
