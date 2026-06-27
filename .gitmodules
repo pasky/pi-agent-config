@@ -26,3 +26,7 @@
 	path = packages/pi-session-summary
 	url = git@github.com:pasky/pi-session-summary.git
 	branch = main
+[submodule "packages/pi-omplike-advisor"]
+	path = packages/pi-omplike-advisor
+	url = git@github.com:pasky/pi-omplike-advisor.git
+	branch = main

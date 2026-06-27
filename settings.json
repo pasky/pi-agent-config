@@ -18,11 +18,11 @@
     "npm:@marckrenn/pi-sub-bar@1.5.0",
     "packages/pi-side-agents",
     "packages/pi-session-summary",
-    "packages/chrome-cdp-skill"
+    "packages/chrome-cdp-skill",
+    "packages/pi-omplike-advisor"
   ],
   "extensions": [
     "extensions/tps.ts",
-    "extensions/review.ts",
-    "extensions/advisor.ts"
+    "extensions/review.ts"
   ]
 }
