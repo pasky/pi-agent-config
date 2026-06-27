@@ -174,7 +174,7 @@ export function formatReconfirmPreamble(held: readonly AdvisorNote[]): string {
 		"### Held advisories — reconfirm",
 		"",
 		"You raised these on an earlier step; they were held pending reconfirmation, because by now the agent may have already addressed them. Re-check each against the latest activity below.",
-		"For every item that STILL applies, call `advise` again with the same severity. Say nothing for the rest — silence drops them.",
+		"For every item that STILL applies, call `advise` again — same severity, or higher if it's gotten worse; never lower it. Say nothing for the rest — silence drops them.",
 		"",
 		items,
 		"",
@@ -350,7 +350,7 @@ export class AdvisorRuntime {
 	// or "failed" (errored 3x and dropped). Lets waitUntilSettled distinguish a
 	// genuine settle from a give-up, so held notes aren't delivered as if confirmed.
 	#lastOutcome: "ok" | "failed" | undefined;
-	#settleWaiters: Array<() => void> = [];
+	#settleWaiters: Array<{ settle: () => void; cancel: () => void }> = [];
 	#busy = false;
 	#backlog = 0;
 	#failures = 0;
@@ -414,24 +414,30 @@ export class AdvisorRuntime {
 		if (this.idle) return Promise.resolve(this.#lastOutcome === "failed" ? "failed" : "settled");
 		return new Promise((resolve) => {
 			let done = false;
-			let onSettle: () => void;
+			let waiter: { settle: () => void; cancel: () => void };
 			let timer: ReturnType<typeof setTimeout>;
 			const finish = (r: "settled" | "timeout" | "aborted" | "failed") => {
 				if (done) return;
 				done = true;
 				clearTimeout(timer);
-				const i = this.#settleWaiters.indexOf(onSettle);
+				const i = this.#settleWaiters.indexOf(waiter);
 				if (i >= 0) this.#settleWaiters.splice(i, 1);
 				signal?.removeEventListener("abort", onAbort);
 				resolve(r);
 			};
 			const onAbort = () => finish("aborted");
-			onSettle = () => {
-				if (this.disposed) finish("aborted");
-				else if (this.idle) finish(this.#lastOutcome === "failed" ? "failed" : "settled");
+			waiter = {
+				// Fired when the drain reaches idle (a review completed).
+				settle: () => {
+					if (this.disposed) finish("aborted");
+					else if (this.idle) finish(this.#lastOutcome === "failed" ? "failed" : "settled");
+				},
+				// Fired by reset()/dispose(): resolve immediately rather than waiting for
+				// the in-flight prompt to unwind (which could take up to the timeout).
+				cancel: () => finish("aborted"),
 			};
 			timer = setTimeout(() => finish("timeout"), timeoutMs);
-			this.#settleWaiters.push(onSettle);
+			this.#settleWaiters.push(waiter);
 			if (signal) {
 				if (signal.aborted) finish("aborted");
 				else signal.addEventListener("abort", onAbort);
@@ -440,7 +446,12 @@ export class AdvisorRuntime {
 	}
 
 	#notifySettled(): void {
-		for (const w of [...this.#settleWaiters]) w();
+		for (const w of [...this.#settleWaiters]) w.settle();
+	}
+
+	/** Resolve all pending waiters as "aborted" (used by reset/dispose). */
+	#cancelWaiters(): void {
+		for (const w of [...this.#settleWaiters]) w.cancel();
 	}
 
 	get usage(): { input: number; output: number; cost: number; contextTokens: number; contextPercent: number | null } {
@@ -487,7 +498,7 @@ export class AdvisorRuntime {
 		try {
 			this.agent.reset();
 		} catch {}
-		this.#notifySettled();
+		this.#cancelWaiters();
 	}
 
 	dispose(): void {
@@ -501,7 +512,7 @@ export class AdvisorRuntime {
 		try {
 			this.agent.abort();
 		} catch {}
-		this.#notifySettled();
+		this.#cancelWaiters();
 	}
 
 	async #drain(): Promise<void> {
@@ -525,27 +536,44 @@ export class AdvisorRuntime {
 				const preamble = formatReconfirmPreamble(offered);
 				this.#reraised = new Set();
 				const prompt = batch.join("\n\n---\n\n");
+				// A review "fails" either by throwing OR — the common case — by resolving
+				// with an assistant message whose stopReason is "error"/"aborted" (the agent
+				// loop records provider failures that way instead of throwing). A failed
+				// review must NOT prune held notes (we'd drop them as if recanted).
+				let failed = false;
 				try {
 					this.onDebug?.("prompting advisor agent, delta chars=", prompt.length, "held=", offered.length);
 					await this.agent.prompt(`### Session update\n\n${preamble}${prompt}`);
-					// Prune recanted holds: offered notes the advisor stayed silent on.
-					for (const key of offeredKeys) {
-						if (!this.#reraised.has(key)) {
-							const i = this.#held.findIndex((n) => dedupeKey(n.note) === key);
-							if (i >= 0) this.#held.splice(i, 1);
+					if (this.#epoch !== epoch) {
+						this.#reraised = undefined;
+						continue; // reset/dispose during the prompt; batch is stale
+					}
+					const last = this.agent.state.messages[this.agent.state.messages.length - 1] as AssistantMessage;
+					if (last?.stopReason === "error" || last?.stopReason === "aborted") {
+						this.onDebug?.("advisor review error, stop=", last?.stopReason, "err=", last?.errorMessage ?? "-");
+						failed = true;
+					} else {
+						// Success: prune recanted holds (offered notes the advisor stayed silent on).
+						for (const key of offeredKeys) {
+							if (!this.#reraised?.has(key)) {
+								const i = this.#held.findIndex((n) => dedupeKey(n.note) === key);
+								if (i >= 0) this.#held.splice(i, 1);
+							}
 						}
+						this.#lastOutcome = "ok";
+						this.#failures = 0;
+						this.onDebug?.("advisor turn done, stop=", last?.stopReason);
 					}
 					this.#reraised = undefined;
-					this.#lastOutcome = "ok";
-					const last = this.agent.state.messages[this.agent.state.messages.length - 1] as AssistantMessage;
-					this.onDebug?.("advisor turn done, stop=", last?.stopReason, "err=", last?.errorMessage ?? "-");
-					this.#failures = 0;
 				} catch (e) {
 					this.#reraised = undefined;
 					this.onDebug?.("advisor prompt threw", String(e));
 					// A reset/dispose aborts the in-flight prompt; drop the stale batch.
 					// Held notes were never removed, so nothing to restore there.
 					if (this.#epoch !== epoch) continue;
+					failed = true;
+				}
+				if (failed) {
 					this.#failures++;
 					if (this.#failures >= 3) {
 						// Gave up reconfirming this batch. Mark failed so waitUntilSettled

@@ -567,6 +567,45 @@ test("runtime.waitUntilSettled: a dropped (3x-failed) review resolves 'failed', 
 	assert.equal(rt.hasHeld, true, "held note preserved across a failed reconfirm");
 });
 
+test("runtime.waitUntilSettled: a provider error (stopReason, no throw) resolves 'failed', held preserved", async () => {
+	// The real Agent records provider failures as an assistant message with
+	// stopReason "error" rather than throwing — that must count as a failed review.
+	let attempts = 0;
+	const agent = {
+		state: { messages: [], model: {} },
+		async prompt() {
+			attempts++;
+			this.state.messages.push({ role: "assistant", content: [], usage: {}, stopReason: "error", errorMessage: "503" });
+		},
+		abort() {},
+		reset() {},
+	};
+	const rt = new A.AdvisorRuntime(agent, new A.AdviseTool(() => false), 0);
+	rt.hold("data race", "blocker");
+	rt.push("turn");
+	assert.equal(await rt.waitUntilSettled(2000), "failed");
+	assert.equal(attempts, 3, "errored review retried 3x then dropped");
+	assert.equal(rt.hasHeld, true, "held note NOT pruned by an errored (non-throwing) review");
+});
+
+test("runtime.waitUntilSettled: reset() cancels a pending waiter as 'aborted' immediately", async () => {
+	let resolvePrompt;
+	const agent = {
+		state: { messages: [], model: {} },
+		prompt() {
+			return new Promise((r) => (resolvePrompt = r)); // hang
+		},
+		abort() {},
+		reset() {},
+	};
+	const rt = new A.AdvisorRuntime(agent, new A.AdviseTool(() => true), 0);
+	rt.push("hang");
+	const p = rt.waitUntilSettled(5000); // would hang on the in-flight prompt
+	rt.reset(); // must resolve the waiter now, not wait for the prompt/timeout
+	assert.equal(await p, "aborted");
+	resolvePrompt?.(); // let the hung prompt unwind for a clean exit
+});
+
 test("runtime.hold: re-raising a held note at higher severity escalates it", () => {
 	const rt = new A.AdvisorRuntime({ state: { messages: [], model: {} }, async prompt() {}, abort() {}, reset() {} }, new A.AdviseTool(() => false), 0);
 	rt.hold("flaky test", "concern");

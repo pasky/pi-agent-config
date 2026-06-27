@@ -68,8 +68,9 @@ Cite the exact instruction or risk.
 
 concern/blocker are held and reconfirmed before they reach the agent: you may be
 shown your held advisories again alongside newer activity. Re-raise EACH that still
-applies (same severity) — this is not a repeat, and re-raising several is fine here.
-Stay silent on any the agent has since addressed; silence drops them.
+applies (same severity, or higher if it's gotten worse — never lower) — this is not a
+repeat, and re-raising several is fine here. Stay silent on any the agent has since
+addressed; silence drops them.
 </severity>
 
 You MAY suggest an approach or fix if you've explored enough to be confident.
