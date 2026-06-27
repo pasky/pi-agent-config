@@ -21,7 +21,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
-import { inferCurrentMode, loadModeSpec, resolveModelAndThinking } from "../packages/pi-amplike/extensions/lib/mode-utils.js";
+import { inferCurrentMode, loadModesMap, resolveModelAndThinking } from "../packages/pi-amplike/extensions/lib/mode-utils.js";
 import { type SingleResult, renderResults, runSubagent } from "../packages/pi-amplike/extensions/lib/subagent-core.js";
 
 const DEFAULT_SINCE = "HEAD~1";
@@ -43,8 +43,12 @@ async function resolveDefaultReviewMode(
 ): Promise<string | undefined> {
 	const current = await inferCurrentMode(cwd, currentModel, currentThinkingLevel);
 	const candidate = current === "deep" ? "smart" : "deep";
-	// Only use it if it resolves to a real mode; otherwise stay unset.
-	return (await loadModeSpec(cwd, candidate)) ? candidate : undefined;
+	// Validate against the SAME authoritative modes file used for inference (the
+	// one the overlay uses), not loadModeSpec's project->global fallthrough — so we
+	// never reach into global modes when the active project file disables the
+	// overlay or lacks this mode. Stay unset if it isn't a real mode there.
+	const modes = loadModesMap(cwd);
+	return modes?.[candidate] ? candidate : undefined;
 }
 
 const WIDGET_KEY = "review";
