@@ -100,7 +100,7 @@ export function isTerminalTurn(message: { content?: ReadonlyArray<{ type: string
 export interface TurnBlockRuntime {
 	readonly hasHeld: boolean;
 	takeHeld(): AdvisorNote[];
-	waitUntilSettled(timeoutMs: number, signal?: AbortSignal): Promise<"settled" | "timeout" | "aborted">;
+	waitUntilSettled(timeoutMs: number, signal?: AbortSignal): Promise<"settled" | "timeout" | "aborted" | "failed">;
 }
 
 /**
@@ -113,8 +113,10 @@ export interface TurnBlockRuntime {
  *     - mid-run  → timeout = backoff(consecutiveBlocks); on timeout, keep the held
  *                  notes and lengthen the next wait (return consecutiveBlocks+1).
  * - On settle: steer in whatever survived reconfirmation (may be empty), reset streak.
- * - On terminal timeout: deliver held notes best-effort — the agent did no
- *   follow-up (it stopped), so they're current, not stale.
+ * - On timeout / failed reconfirm (advisor errored out): non-terminal keeps the
+ *   held notes and lengthens the next wait; terminal delivers best-effort (the
+ *   agent did no follow-up — it stopped — so held notes are current, and it's the
+ *   last chance before control returns to the user).
  * - On abort (user hit Escape): bail, keep held notes + streak.
  */
 export async function runTurnBlock(opts: {
@@ -142,20 +144,23 @@ export async function runTurnBlock(opts: {
 	const result = await runtime.waitUntilSettled(timeoutMs, opts.signal);
 	if (result === "aborted") return opts.consecutiveBlocks; // user bailed; keep held + streak
 	if (result === "settled") {
+		// Only a successful reconfirmation settles; the advisor has pruned recanted
+		// notes, so #held is the confirmed survivor set.
 		const held = runtime.takeHeld();
 		if (held.length) opts.deliverHeld(held);
 		return 0;
 	}
-	// timeout
+	// timeout OR failed (advisor errored 3x and dropped the reconfirm). Either way
+	// the held notes are NOT confirmed.
 	if (terminal) {
 		const held = runtime.takeHeld();
 		if (held.length) {
 			opts.deliverHeld(held);
-			opts.notify("advisor was slow; delivering held advice anyway");
+			opts.notify("advisor didn't reconfirm in time; delivering held advice anyway");
 		}
 		return 0;
 	}
-	return opts.consecutiveBlocks + 1; // mid-run: keep held, lengthen next wait
+	return opts.consecutiveBlocks + 1; // mid-run: keep held unconfirmed, lengthen next wait
 }
 
 /**
@@ -341,6 +346,10 @@ export class AdvisorRuntime {
 	#held: AdvisorNote[] = [];
 	// Keys re-raised during the in-flight review; drives the post-review prune.
 	#reraised: Set<string> | undefined;
+	// Outcome of the most recently completed drain batch: "ok" (successful review)
+	// or "failed" (errored 3x and dropped). Lets waitUntilSettled distinguish a
+	// genuine settle from a give-up, so held notes aren't delivered as if confirmed.
+	#lastOutcome: "ok" | "failed" | undefined;
 	#settleWaiters: Array<() => void> = [];
 	#busy = false;
 	#backlog = 0;
@@ -381,8 +390,12 @@ export class AdvisorRuntime {
 		if (this.disposed) return;
 		const key = dedupeKey(note);
 		this.#reraised?.add(key);
-		if (!this.#held.some((n) => dedupeKey(n.note) === key)) {
+		const existing = this.#held.find((n) => dedupeKey(n.note) === key);
+		if (!existing) {
 			this.#held.push({ note, severity });
+		} else if (rankOf(severity) > rankOf(existing.severity)) {
+			// Honor an escalation (e.g. a held concern re-raised as a blocker).
+			existing.severity = severity;
 		}
 	}
 
@@ -396,13 +409,14 @@ export class AdvisorRuntime {
 	 * `signal` aborts. Drives the per-turn catch-up block. Resolves "settled"
 	 * immediately if already idle/disposed.
 	 */
-	waitUntilSettled(timeoutMs: number, signal?: AbortSignal): Promise<"settled" | "timeout" | "aborted"> {
-		if (this.idle || this.disposed) return Promise.resolve("settled");
+	waitUntilSettled(timeoutMs: number, signal?: AbortSignal): Promise<"settled" | "timeout" | "aborted" | "failed"> {
+		if (this.disposed) return Promise.resolve("aborted");
+		if (this.idle) return Promise.resolve(this.#lastOutcome === "failed" ? "failed" : "settled");
 		return new Promise((resolve) => {
 			let done = false;
 			let onSettle: () => void;
 			let timer: ReturnType<typeof setTimeout>;
-			const finish = (r: "settled" | "timeout" | "aborted") => {
+			const finish = (r: "settled" | "timeout" | "aborted" | "failed") => {
 				if (done) return;
 				done = true;
 				clearTimeout(timer);
@@ -413,7 +427,8 @@ export class AdvisorRuntime {
 			};
 			const onAbort = () => finish("aborted");
 			onSettle = () => {
-				if (this.idle || this.disposed) finish("settled");
+				if (this.disposed) finish("aborted");
+				else if (this.idle) finish(this.#lastOutcome === "failed" ? "failed" : "settled");
 			};
 			timer = setTimeout(() => finish("timeout"), timeoutMs);
 			this.#settleWaiters.push(onSettle);
@@ -461,6 +476,8 @@ export class AdvisorRuntime {
 		this.#epoch++;
 		this.#pending = [];
 		this.#held = [];
+		this.#reraised = undefined;
+		this.#lastOutcome = undefined;
 		this.#backlog = 0;
 		this.#failures = 0;
 		this.adviseTool.resetDelivered();
@@ -478,6 +495,8 @@ export class AdvisorRuntime {
 		this.#epoch++;
 		this.#pending = [];
 		this.#held = [];
+		this.#reraised = undefined;
+		this.#lastOutcome = undefined;
 		this.#backlog = 0;
 		try {
 			this.agent.abort();
@@ -517,6 +536,7 @@ export class AdvisorRuntime {
 						}
 					}
 					this.#reraised = undefined;
+					this.#lastOutcome = "ok";
 					const last = this.agent.state.messages[this.agent.state.messages.length - 1] as AssistantMessage;
 					this.onDebug?.("advisor turn done, stop=", last?.stopReason, "err=", last?.errorMessage ?? "-");
 					this.#failures = 0;
@@ -528,7 +548,10 @@ export class AdvisorRuntime {
 					if (this.#epoch !== epoch) continue;
 					this.#failures++;
 					if (this.#failures >= 3) {
+						// Gave up reconfirming this batch. Mark failed so waitUntilSettled
+						// reports it (don't deliver held notes as if confirmed).
 						this.#failures = 0;
+						this.#lastOutcome = "failed";
 					} else {
 						this.#pending.unshift(...batch);
 						this.#backlog += turns;

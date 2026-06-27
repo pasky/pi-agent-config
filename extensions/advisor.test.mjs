@@ -340,6 +340,25 @@ test("runTurnBlock: aborted (user Escape) → keeps held + streak, no delivery",
 	assert.equal(rt.hasHeld, true);
 });
 
+test("runTurnBlock: non-terminal + failed reconfirm → keeps held unconfirmed, backs off", async () => {
+	// A failed reconfirm (advisor errored out) must NOT deliver held notes as if
+	// confirmed — same handling as a timeout.
+	const delivered = [];
+	const rt = stubRuntime({ held: [{ note: "x", severity: "blocker" }], settleResult: "failed" });
+	const n = await A.runTurnBlock(blockArgs({ terminal: false, runtime: rt, consecutiveBlocks: 1, deliverHeld: (x) => delivered.push(...x) }));
+	assert.equal(n, 2, "backoff lengthens");
+	assert.equal(delivered.length, 0, "unconfirmed held note is NOT delivered mid-run");
+	assert.equal(rt.hasHeld, true);
+});
+
+test("runTurnBlock: terminal + failed reconfirm → best-effort delivers", async () => {
+	const delivered = [];
+	const rt = stubRuntime({ held: [{ note: "x", severity: "concern" }], settleResult: "failed" });
+	const n = await A.runTurnBlock(blockArgs({ terminal: true, runtime: rt, deliverHeld: (x) => delivered.push(...x) }));
+	assert.equal(n, 0);
+	assert.deepEqual(delivered, [{ note: "x", severity: "concern" }], "last chance before idle → deliver best-effort");
+});
+
 // --- real AdvisorRuntime + stub Agent: hold → reconfirm → deliver/drop ---
 // onReview(text, {tool, reviewCount}) simulates the advisor's reaction per review.
 function buildIntegration({ onReview } = {}) {
@@ -527,6 +546,38 @@ test("runtime.waitUntilSettled: settles on drain, times out, and aborts", async 
 	assert.equal(await p, "aborted");
 	resolvePrompt(); // let the drain finish
 	assert.equal(await rt.waitUntilSettled(2000), "settled");
+});
+
+test("runtime.waitUntilSettled: a dropped (3x-failed) review resolves 'failed', held preserved", async () => {
+	let attempts = 0;
+	const agent = {
+		state: { messages: [], model: {} },
+		async prompt() {
+			attempts++;
+			throw new Error("boom");
+		},
+		abort() {},
+		reset() {},
+	};
+	const rt = new A.AdvisorRuntime(agent, new A.AdviseTool(() => false), 0);
+	rt.hold("data race", "blocker"); // pre-existing held note
+	rt.push("turn");
+	assert.equal(await rt.waitUntilSettled(2000), "failed");
+	assert.equal(attempts, 3, "retried 3x then dropped");
+	assert.equal(rt.hasHeld, true, "held note preserved across a failed reconfirm");
+});
+
+test("runtime.hold: re-raising a held note at higher severity escalates it", () => {
+	const rt = new A.AdvisorRuntime({ state: { messages: [], model: {} }, async prompt() {}, abort() {}, reset() {} }, new A.AdviseTool(() => false), 0);
+	rt.hold("flaky test", "concern");
+	rt.hold("flaky   test", "blocker"); // same note (whitespace-normalized), escalated
+	const held = rt.takeHeld();
+	assert.equal(held.length, 1, "deduped to one entry");
+	assert.equal(held[0].severity, "blocker", "escalation honored");
+	// de-escalation is ignored
+	rt.hold("x", "blocker");
+	rt.hold("x", "concern");
+	assert.equal(rt.takeHeld()[0].severity, "blocker");
 });
 
 // ===========================================================================
