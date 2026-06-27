@@ -45,9 +45,12 @@ const ALIAS = {
 	"@earendil-works/pi-agent-core": pkgEntry("pi-agent-core"),
 	"@earendil-works/pi-tui": pkgEntry("pi-tui"),
 	"@earendil-works/pi-ai": pkgEntry("pi-ai"),
+	// review.ts now imports typebox (for the `review` tool's params); resolve it
+	// from pi's own bundled copy so the headless jiti import can find it.
+	typebox: piRequire.resolve("typebox"),
 };
 const jiti = createJiti(import.meta.url, { moduleCache: false, alias: ALIAS });
-const { parseReviewArgs, buildReviewContent } = await jiti.import(resolve(AGENT_DIR, "extensions/review.ts"));
+const { parseReviewArgs, buildReviewContent, composeReviewPrompt, defaultReviewPrompt } = await jiti.import(resolve(AGENT_DIR, "extensions/review.ts"));
 
 initTheme();
 
@@ -62,6 +65,7 @@ test("parseReviewArgs: defaults", () => {
 	assert.deepEqual(parseReviewArgs(""), {
 		modeOpt: undefined,
 		since: "HEAD~1",
+		customPrompt: "",
 		prompt: "review changes since HEAD~1 carefully (both form and substance) - analyze, critique, debate and challenge",
 	});
 });
@@ -69,23 +73,33 @@ test("parseReviewArgs: defaults", () => {
 test("parseReviewArgs: since only", () => {
 	const r = parseReviewArgs("main");
 	assert.equal(r.since, "main");
+	assert.equal(r.customPrompt, "");
 	assert.match(r.prompt, /since main/);
 });
 
-test("parseReviewArgs: since + prompt", () => {
-	assert.deepEqual(parseReviewArgs("main focus on auth"), {
-		modeOpt: undefined,
-		since: "main",
-		prompt: "focus on auth",
-	});
+test("parseReviewArgs: since + prompt APPENDS to default", () => {
+	const r = parseReviewArgs("main focus on auth");
+	assert.equal(r.modeOpt, undefined);
+	assert.equal(r.since, "main");
+	assert.equal(r.customPrompt, "focus on auth");
+	// custom prompt is appended to (not replacing) the default review prompt
+	assert.match(r.prompt, /since main/);
+	assert.match(r.prompt, /focus on auth$/);
+	assert.equal(r.prompt, defaultReviewPrompt("main") + "\n\nfocus on auth");
 });
 
-test("parseReviewArgs: -mode + since + prompt", () => {
-	assert.deepEqual(parseReviewArgs("-mode deep origin/dev be ruthless"), {
-		modeOpt: "deep",
-		since: "origin/dev",
-		prompt: "be ruthless",
-	});
+test("parseReviewArgs: -mode + since + prompt APPENDS", () => {
+	const r = parseReviewArgs("-mode deep origin/dev be ruthless");
+	assert.equal(r.modeOpt, "deep");
+	assert.equal(r.since, "origin/dev");
+	assert.equal(r.customPrompt, "be ruthless");
+	assert.equal(r.prompt, defaultReviewPrompt("origin/dev") + "\n\nbe ruthless");
+});
+
+test("composeReviewPrompt: no custom -> just default; custom -> appended", () => {
+	assert.equal(composeReviewPrompt("main"), defaultReviewPrompt("main"));
+	assert.equal(composeReviewPrompt("main", "  "), defaultReviewPrompt("main"));
+	assert.equal(composeReviewPrompt("main", "focus on X"), defaultReviewPrompt("main") + "\n\nfocus on X");
 });
 
 test("parseReviewArgs: -mode only falls back to default since", () => {
@@ -134,10 +148,11 @@ async function loadReviewExtension() {
 	return ext;
 }
 
-test("extension loads + registers command and renderer", async () => {
+test("extension loads + registers command, tool and renderer", async () => {
 	const ext = await loadReviewExtension();
 	assert.ok(ext.commands.has("review"), "registers /review");
 	assert.ok(ext.messageRenderers.has("review-result"), "registers renderer");
+	assert.ok(ext.tools.has("review"), "registers review tool");
 });
 
 // --- model context view ---------------------------------------------------
