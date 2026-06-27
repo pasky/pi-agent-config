@@ -17,8 +17,10 @@
 
 import assert from "node:assert/strict";
 import { execSync } from "node:child_process";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -50,7 +52,7 @@ const ALIAS = {
 	typebox: piRequire.resolve("typebox"),
 };
 const jiti = createJiti(import.meta.url, { moduleCache: false, alias: ALIAS });
-const { parseReviewArgs, buildReviewContent, composeReviewPrompt, defaultReviewPrompt } = await jiti.import(resolve(AGENT_DIR, "extensions/review.ts"));
+const { parseReviewArgs, buildReviewContent, composeReviewPrompt, defaultReviewPrompt, resolveDefaultReviewMode } = await jiti.import(resolve(AGENT_DIR, "extensions/review.ts"));
 
 initTheme();
 
@@ -140,6 +142,62 @@ test("buildReviewContent: omits mode attr when absent", () => {
 	});
 	assert.doesNotMatch(c, /mode=/);
 });
+
+// --- resolveDefaultReviewMode (reads modes.json from a temp project cwd) ----
+// loadModeSpec checks <cwd>/.pi/modes.json first, then the global file under
+// PI_CODING_AGENT_DIR. We point that at an empty temp dir (no modes.json) so the
+// project file is fully authoritative and the real global modes.json can't leak
+// in. runIsolated saves/restores the env var around each test.
+const emptyGlobal = mkdtempSync(join(tmpdir(), "review-global-"));
+async function runIsolated(fn) {
+	const prev = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = emptyGlobal;
+	try {
+		return await fn();
+	} finally {
+		if (prev === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = prev;
+	}
+}
+function withTempModes(modes) {
+	const dir = mkdtempSync(join(tmpdir(), "review-modes-"));
+	mkdirSync(join(dir, ".pi"), { recursive: true });
+	writeFileSync(join(dir, ".pi", "modes.json"), JSON.stringify({ version: 1, currentMode: "smart", modes }));
+	return dir;
+}
+const MODES = {
+	smart: { provider: "anthropic", modelId: "sonnet", thinkingLevel: "low" },
+	deep: { provider: "openai", modelId: "gpt-x", thinkingLevel: "high" },
+};
+
+test("resolveDefaultReviewMode: not in deep -> deep", () => runIsolated(async () => {
+	const dir = withTempModes(MODES);
+	assert.equal(await resolveDefaultReviewMode(dir, { provider: "anthropic", id: "sonnet" }, "low"), "deep");
+}));
+
+test("resolveDefaultReviewMode: exactly in deep -> smart", () => runIsolated(async () => {
+	const dir = withTempModes(MODES);
+	assert.equal(await resolveDefaultReviewMode(dir, { provider: "openai", id: "gpt-x" }, "high"), "smart");
+}));
+
+test("resolveDefaultReviewMode: deep's model but different thinking -> deep (P2)", () => runIsolated(async () => {
+	const dir = withTempModes(MODES);
+	assert.equal(await resolveDefaultReviewMode(dir, { provider: "openai", id: "gpt-x" }, "off"), "deep");
+}));
+
+test("resolveDefaultReviewMode: candidate mode not defined -> undefined (P3)", () => runIsolated(async () => {
+	// Only 'deep' defined: when in deep, candidate 'smart' is missing -> unset.
+	const dir = withTempModes({ deep: MODES.deep });
+	assert.equal(await resolveDefaultReviewMode(dir, { provider: "openai", id: "gpt-x" }, "high"), undefined);
+	// No modes at all: candidate 'deep' missing -> unset.
+	const empty = withTempModes({});
+	assert.equal(await resolveDefaultReviewMode(empty, { provider: "x", id: "y" }, "low"), undefined);
+}));
+
+test("resolveDefaultReviewMode: deep without thinkingLevel matches on model alone", () => runIsolated(async () => {
+	const dir = withTempModes({ smart: MODES.smart, deep: { provider: "openai", modelId: "gpt-x" } });
+	assert.equal(await resolveDefaultReviewMode(dir, { provider: "openai", id: "gpt-x" }, "off"), "smart");
+}));
 
 // --- real loader ----------------------------------------------------------
 

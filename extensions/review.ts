@@ -21,34 +21,38 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
-import { inferCurrentMode, loadModesMap, resolveModelAndThinking } from "../packages/pi-amplike/extensions/lib/mode-utils.js";
+import { loadModeSpec, resolveModelAndThinking } from "../packages/pi-amplike/extensions/lib/mode-utils.js";
 import { type SingleResult, renderResults, runSubagent } from "../packages/pi-amplike/extensions/lib/subagent-core.js";
 
 const DEFAULT_SINCE = "HEAD~1";
 // When no -mode is given, the reviewer should be a fresh perspective from a
-// strong model: default to "deep" — unless the current session is already in
-// "deep" mode, in which case fall back to "smart" so we don't just clone the
-// same heavyweight setup.
+// strong model: default to "deep" — unless we're effectively already running
+// "deep", in which case fall back to "smart" so we don't just clone the same
+// heavyweight setup.
 //
-// Returns the chosen mode name, or undefined if that mode isn't actually defined
-// in modes.json — in which case the caller should leave the mode unset (and let
-// the review run on the current model) rather than mislabel it as deep/smart.
-// inferCurrentMode uses the canonical mode inference (shared with the modes
-// overlay): for a thinking-capable model it matches the thinking level exactly,
-// so a custom selection that merely shares deep's model isn't mistaken for deep.
-async function resolveDefaultReviewMode(
+// We only need to answer "am I in deep?", so just load deep's spec and compare
+// the current model+thinking to it directly (rather than reinventing full mode
+// inference). "In deep" requires the same provider+modelId and — when deep pins
+// a thinking level — the same thinking level (so opus@off isn't taken for a
+// opus@high deep). Both this check and the validation below use loadModeSpec,
+// the same lookup resolveModelAndThinking uses to actually apply the mode, so
+// detection/validation/application can't disagree. Returns undefined when the
+// chosen mode isn't defined — the caller then leaves the mode unset (review runs
+// on the current model) rather than mislabeling it.
+export async function resolveDefaultReviewMode(
 	cwd: string,
-	currentModel: { provider?: string; id?: string; reasoning?: unknown } | undefined,
+	currentModel: { provider?: string; id?: string } | undefined,
 	currentThinkingLevel: string,
 ): Promise<string | undefined> {
-	const current = await inferCurrentMode(cwd, currentModel, currentThinkingLevel);
-	const candidate = current === "deep" ? "smart" : "deep";
-	// Validate against the SAME authoritative modes file used for inference (the
-	// one the overlay uses), not loadModeSpec's project->global fallthrough — so we
-	// never reach into global modes when the active project file disables the
-	// overlay or lacks this mode. Stay unset if it isn't a real mode there.
-	const modes = loadModesMap(cwd);
-	return modes?.[candidate] ? candidate : undefined;
+	const deep = await loadModeSpec(cwd, "deep");
+	const inDeep =
+		!!deep &&
+		currentModel?.provider === deep.provider &&
+		currentModel?.id === deep.modelId &&
+		(deep.thinkingLevel == null || deep.thinkingLevel === currentThinkingLevel);
+	const candidate = inDeep ? "smart" : "deep";
+	// Only use a mode that actually exists (same lookup used to apply it).
+	return (await loadModeSpec(cwd, candidate)) ? candidate : undefined;
 }
 
 const WIDGET_KEY = "review";
