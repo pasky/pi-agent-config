@@ -91,6 +91,12 @@ export function nextBackoffMs(consecutive: number, baseMs = 15_000, capMs = 120_
  * issued no tool calls — the agent-loop's inner loop exits unless something is
  * steered in. We block-until-settled on terminal turns so a blocker the advisor
  * raises about the final turn is caught before control returns to the user.
+ *
+ * Approximation: a turn WITH tool calls can still end the run if a tool returns
+ * `terminate` or a stop hook fires; we'd classify that non-terminal. The cost is
+ * only a *delay*, not a loss — a held note still rides the next turn's catch-up
+ * block; the sole gap is a brand-new blocker raised about such a turn (nothing
+ * previously held), which then lands on the next user turn instead of before idle.
  */
 export function isTerminalTurn(message: { content?: ReadonlyArray<{ type: string }> } | undefined): boolean {
 	return !(message?.content ?? []).some((c) => c.type === "toolCall");
@@ -350,6 +356,10 @@ export class AdvisorRuntime {
 	// or "failed" (errored 3x and dropped). Lets waitUntilSettled distinguish a
 	// genuine settle from a give-up, so held notes aren't delivered as if confirmed.
 	#lastOutcome: "ok" | "failed" | undefined;
+	// Epoch of the in-flight review; advice callbacks are honored only while it still
+	// matches #epoch. A reset/dispose bumps #epoch, orphaning a stale review whose
+	// late advise() calls would otherwise leak into the moved-on session.
+	#reviewEpoch = -1;
 	#settleWaiters: Array<{ settle: () => void; cancel: () => void }> = [];
 	#busy = false;
 	#backlog = 0;
@@ -402,6 +412,25 @@ export class AdvisorRuntime {
 	/** Remove and return the currently-held notes (the reconfirmation survivors). */
 	takeHeld(): AdvisorNote[] {
 		return this.#held.splice(0);
+	}
+
+	/** Whether advice from the in-flight review is still valid (not orphaned by a
+	 *  reset/dispose). The delivery layer consults this to drop late stale callbacks. */
+	get acceptingAdvice(): boolean {
+		return !this.disposed && this.#reviewEpoch === this.#epoch;
+	}
+
+	/**
+	 * If `note` matches a currently-held note, count it as a reconfirmation (so the
+	 * post-review prune keeps it) and return true. Lets the delivery layer suppress a
+	 * de-escalation (a held blocker re-raised as a nit) instead of dropping the
+	 * blocker and shipping a nit.
+	 */
+	reconfirmIfHeld(note: string): boolean {
+		const key = dedupeKey(note);
+		if (!this.#held.some((n) => dedupeKey(n.note) === key)) return false;
+		this.#reraised?.add(key);
+		return true;
 	}
 
 	/**
@@ -535,6 +564,7 @@ export class AdvisorRuntime {
 				const offeredKeys = new Set(offered.map((n) => dedupeKey(n.note)));
 				const preamble = formatReconfirmPreamble(offered);
 				this.#reraised = new Set();
+				this.#reviewEpoch = epoch;
 				const prompt = batch.join("\n\n---\n\n");
 				// A review "fails" either by throwing OR — the common case — by resolving
 				// with an assistant message whose stopReason is "error"/"aborted" (the agent
@@ -549,8 +579,11 @@ export class AdvisorRuntime {
 						continue; // reset/dispose during the prompt; batch is stale
 					}
 					const last = this.agent.state.messages[this.agent.state.messages.length - 1] as AssistantMessage;
-					if (last?.stopReason === "error" || last?.stopReason === "aborted") {
-						this.onDebug?.("advisor review error, stop=", last?.stopReason, "err=", last?.errorMessage ?? "-");
+					if (last?.stopReason === "error" || last?.stopReason === "aborted" || last?.stopReason === "length") {
+						// error/aborted = provider failure (recorded, not thrown); length =
+						// truncated review — in all three the advisor didn't finish, so don't
+						// prune held notes on its accidental "silence".
+						this.onDebug?.("advisor review incomplete, stop=", last?.stopReason, "err=", last?.errorMessage ?? "-");
 						failed = true;
 					} else {
 						// Success: prune recanted holds (offered notes the advisor stayed silent on).
@@ -682,6 +715,11 @@ export default function (pi: ExtensionAPI) {
 	// settles or a turn doesn't need to block).
 	let consecutiveBlocks = 0;
 
+	// Set when the user aborts (Escape) around a catch-up block: while true, late
+	// advisor advice is delivered WITHOUT triggerTurn so it can't auto-resume the run
+	// the user just stopped. Cleared when the user drives the next turn.
+	let autoResumeSuppressed = false;
+
 	// ---- advice delivery into the primary session ----
 	// Called synchronously by the advise tool during a review. Returns true if the
 	// note was delivered now (recorded for dedup), false if held for reconfirmation
@@ -694,6 +732,13 @@ export default function (pi: ExtensionAPI) {
 			dbg("handoff in progress, dropping advice", severity, JSON.stringify(note).slice(0, 80));
 			return true;
 		}
+		// Drop late callbacks the session has moved past: advisor turned off, or a
+		// reset/dispose orphaned the in-flight review (its epoch no longer matches).
+		// Report "delivered" so AdviseTool doesn't keep re-firing it.
+		if (!enabled || (runtime && !runtime.acceptingAdvice)) {
+			dbg("dropping stale/disabled advice", severity, JSON.stringify(note).slice(0, 80));
+			return true;
+		}
 
 		if (isHighSeverity(severity)) {
 			// Always held: the advisor is seconds behind, so any high-severity advice
@@ -704,12 +749,21 @@ export default function (pi: ExtensionAPI) {
 			return false;
 		}
 
-		// nit: deliver now, tagged as raised about an earlier step; triggerTurn so an
-		// idle agent still sees it. Low-stakes, so mild staleness is acceptable.
+		// A nit whose text matches a held high-severity note is a de-escalation the
+		// prompt forbids; treat it as a reconfirmation (keep the held note at its
+		// severity) instead of shipping a nit and pruning the blocker.
+		if (runtime?.reconfirmIfHeld(note)) {
+			dbg("nit reconfirms a held note; keeping it held", JSON.stringify(note).slice(0, 120));
+			return true;
+		}
+
+		// nit: deliver now, tagged as raised about an earlier step. triggerTurn wakes
+		// an idle agent — unless the user just aborted (Escape), in which case we must
+		// not auto-resume the run they stopped.
 		dbg("deliverAdvice nit", JSON.stringify(note).slice(0, 120));
 		const notes: AdvisorNote[] = [{ note, severity }];
 		const content = formatAdvisoryContent(notes, { stale: true });
-		pi.sendMessage({ customType: ADVISORY_TYPE, content, display: true, details: { notes } }, { deliverAs: "steer", triggerTurn: true });
+		pi.sendMessage({ customType: ADVISORY_TYPE, content, display: true, details: { notes } }, { deliverAs: "steer", triggerTurn: !autoResumeSuppressed });
 		return true;
 	}
 
@@ -719,7 +773,7 @@ export default function (pi: ExtensionAPI) {
 		for (const n of notes) {
 			dbg("deliverHeld", n.severity, JSON.stringify(n.note).slice(0, 120));
 			const content = formatAdvisoryContent([n]);
-			pi.sendMessage({ customType: ADVISORY_TYPE, content, display: true, details: { notes: [n] } }, { deliverAs: "steer", triggerTurn: true });
+			pi.sendMessage({ customType: ADVISORY_TYPE, content, display: true, details: { notes: [n] } }, { deliverAs: "steer", triggerTurn: !autoResumeSuppressed });
 			// Record at the real delivery point (onAdvice→false never recorded it), so a
 			// later same-or-lower-severity repeat is deduped.
 			adviseTool?.markDelivered(n.note, n.severity);
@@ -734,6 +788,7 @@ export default function (pi: ExtensionAPI) {
 		builtForCwd = undefined;
 		pendingUserPrompt = undefined;
 		consecutiveBlocks = 0;
+		autoResumeSuppressed = false;
 	}
 
 	// Re-prime for a replaced transcript without tearing down the advisor agent:
@@ -744,6 +799,7 @@ export default function (pi: ExtensionAPI) {
 		runtime?.reset();
 		pendingUserPrompt = undefined;
 		consecutiveBlocks = 0;
+		autoResumeSuppressed = false;
 	}
 
 	// ---- build the advisor agent lazily (needs ctx for model/registry/cwd) ----
@@ -796,6 +852,8 @@ export default function (pi: ExtensionAPI) {
 	// Capture the user prompt so it rides the next turn delta to the advisor.
 	pi.on("before_agent_start", (event) => {
 		if (!enabled) return;
+		// The user is driving a new turn; clear any post-abort auto-resume suppression.
+		autoResumeSuppressed = false;
 		pendingUserPrompt = event.prompt;
 	});
 
@@ -834,6 +892,9 @@ export default function (pi: ExtensionAPI) {
 			},
 			deliverHeld,
 		});
+		// If the user aborted (Escape) around the block, suppress auto-resume so a late
+		// advisor callback from the still-running review can't restart the stopped run.
+		if ((ctx as any).signal?.aborted) autoResumeSuppressed = true;
 	});
 
 	// Re-prime the advisor when the primary transcript is rewritten.

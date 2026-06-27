@@ -360,17 +360,20 @@ test("runTurnBlock: terminal + failed reconfirm → best-effort delivers", async
 });
 
 // --- real AdvisorRuntime + stub Agent: hold → reconfirm → deliver/drop ---
-// onReview(text, {tool, reviewCount}) simulates the advisor's reaction per review.
+// onReview(text, {tool, rt, reviewCount}) simulates the advisor's reaction per review.
 function buildIntegration({ onReview } = {}) {
 	const delivered = [];
 	let rt;
 	let reviewCount = 0;
 	const tool = new A.AdviseTool((note, severity) => {
-		// mirrors deliverAdvice: high severity always held, nits delivered now
+		// mirrors deliverAdvice: drop stale (orphaned review), hold high severity,
+		// treat a nit matching a held note as a reconfirmation, else deliver the nit.
+		if (rt && !rt.acceptingAdvice) return true;
 		if (A.isHighSeverity(severity)) {
 			rt.hold(note, severity);
 			return false;
 		}
+		if (rt.reconfirmIfHeld(note)) return true;
 		delivered.push({ note, severity, kind: "nit" });
 		return true;
 	});
@@ -381,7 +384,7 @@ function buildIntegration({ onReview } = {}) {
 			// land AFTER push()/turn_end returns, not synchronously inside it.
 			await new Promise((r) => setTimeout(r, 0));
 			reviewCount++;
-			await onReview?.(text, { tool, reviewCount });
+			await onReview?.(text, { tool, rt, reviewCount });
 			this.state.messages.push({ role: "assistant", content: [], usage: {}, stopReason: "stop" });
 		},
 		abort() {},
@@ -458,6 +461,40 @@ test("integration: a blocker first raised ON the terminal turn is caught + deliv
 	assert.equal(h.delivered[0].kind, "held");
 	assert.equal(h.delivered[0].severity, "blocker");
 	assert.equal(h.rt.hasHeld, false);
+});
+
+test("integration (F1): advice from a review orphaned by reset() is dropped, not held", async () => {
+	const h = buildIntegration({
+		onReview: async (_t, { tool, rt, reviewCount }) => {
+			if (reviewCount === 1) {
+				rt.reset(); // orphan this review mid-flight (e.g. session compaction)
+				await tool.execute("a1", { note: "stale blocker", severity: "blocker" });
+			}
+		},
+	});
+	h.rt.push("turn 1");
+	await h.block(false);
+	await h.rt.waitUntilSettled(2000);
+	assert.equal(h.rt.hasHeld, false, "orphaned review's hold is dropped");
+	assert.equal(h.delivered.length, 0, "nothing delivered from a stale review");
+});
+
+test("integration (F2): a held blocker re-raised as a nit is kept, not de-escalated", async () => {
+	const h = buildIntegration({
+		onReview: async (_text, { tool, reviewCount }) => {
+			if (reviewCount === 1) await tool.execute("a1", { note: "off-by-one", severity: "blocker" });
+			else if (reviewCount === 2) await tool.execute("a2", { note: "off-by-one", severity: "nit" }); // de-escalation attempt
+		},
+	});
+	h.rt.push("turn 1");
+	await h.block(false);
+	await h.rt.waitUntilSettled(5000);
+	assert.equal(h.rt.hasHeld, true);
+	h.rt.push("turn 2");
+	assert.equal(await h.block(true), 0);
+	assert.equal(h.delivered.length, 1, "no nit delivered; the held note survives");
+	assert.equal(h.delivered[0].kind, "held");
+	assert.equal(h.delivered[0].severity, "blocker", "kept at blocker severity, not lowered to nit");
 });
 
 test("integration: held blocker is dropped when the reconfirm review recants", async () => {
@@ -604,6 +641,47 @@ test("runtime.waitUntilSettled: reset() cancels a pending waiter as 'aborted' im
 	rt.reset(); // must resolve the waiter now, not wait for the prompt/timeout
 	assert.equal(await p, "aborted");
 	resolvePrompt?.(); // let the hung prompt unwind for a clean exit
+});
+
+test("runtime.waitUntilSettled: a truncated review (stopReason 'length') resolves 'failed', held preserved", async () => {
+	let attempts = 0;
+	const agent = {
+		state: { messages: [], model: {} },
+		async prompt() {
+			attempts++;
+			this.state.messages.push({ role: "assistant", content: [], usage: {}, stopReason: "length" });
+		},
+		abort() {},
+		reset() {},
+	};
+	const rt = new A.AdvisorRuntime(agent, new A.AdviseTool(() => false), 0);
+	rt.hold("data race", "blocker");
+	rt.push("turn");
+	assert.equal(await rt.waitUntilSettled(2000), "failed");
+	assert.equal(attempts, 3, "truncated review retried 3x then dropped");
+	assert.equal(rt.hasHeld, true, "held note NOT pruned by a truncated review");
+});
+
+test("runtime.acceptingAdvice: an in-flight review orphaned by reset() stops accepting advice", async () => {
+	let during;
+	let afterReset;
+	let rt;
+	const agent = {
+		state: { messages: [], model: {} },
+		async prompt() {
+			during = rt.acceptingAdvice; // reviewEpoch === epoch
+			rt.reset(); // bumps epoch → orphans this in-flight review
+			afterReset = rt.acceptingAdvice;
+			this.state.messages.push({ role: "assistant", content: [], usage: {}, stopReason: "stop" });
+		},
+		abort() {},
+		reset() {},
+	};
+	rt = new A.AdvisorRuntime(agent, new A.AdviseTool(() => false), 0);
+	rt.push("turn");
+	await rt.waitUntilSettled(2000);
+	assert.equal(during, true, "advice accepted during a live review");
+	assert.equal(afterReset, false, "advice rejected once the review's epoch is orphaned");
 });
 
 test("runtime.hold: re-raising a held note at higher severity escalates it", () => {
