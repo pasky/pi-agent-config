@@ -41,7 +41,7 @@ Cite the exact instruction or risk.
 <severity>
 **nit** (or omitted)
 - Non-urgent cleanup, refactor, style, simplification, a missed-but-minor opportunity.
-- Folded in at the next step boundary; the agent keeps working.
+- Low-stakes: surfaced to the agent without stalling or throttling its work.
 
 **concern**
 - The agent might be heading the wrong way or missed something material.
@@ -55,6 +55,10 @@ Cite the exact instruction or risk.
   - Force the user to interrupt later because the agent is going in circles, or
   - Produce something fundamentally unsound.
 - Verify thoroughly before raising.
+
+concern/blocker are held and reconfirmed before they reach the agent: you may be
+shown a held advisory again alongside newer activity. Re-raise it (same severity)
+only if it still applies; stay silent if the agent has since addressed it.
 </severity>
 
 You MAY suggest an approach or fix if you've explored enough to be confident.

@@ -69,52 +69,29 @@ const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, "");
 // 1. pure logic
 // ===========================================================================
 
-test("isInterrupting: only concern/blocker interrupt", () => {
-	assert.equal(A.isInterrupting(undefined), false);
-	assert.equal(A.isInterrupting("nit"), false);
-	assert.equal(A.isInterrupting("concern"), true);
-	assert.equal(A.isInterrupting("blocker"), true);
+test("isHighSeverity: only concern/blocker are held + reconfirmed", () => {
+	assert.equal(A.isHighSeverity(undefined), false);
+	assert.equal(A.isHighSeverity("nit"), false);
+	assert.equal(A.isHighSeverity("concern"), true);
+	assert.equal(A.isHighSeverity("blocker"), true);
 });
 
-test("isImmuneTurn: half-open fence", () => {
-	assert.equal(A.isImmuneTurn(0, 0), false); // immuneUntil 0 ⇒ never immune
-	assert.equal(A.isImmuneTurn(1, 3), true);
-	assert.equal(A.isImmuneTurn(2, 3), true);
-	assert.equal(A.isImmuneTurn(3, 3), false); // fence is exclusive
-	assert.equal(A.isImmuneTurn(4, 3), false);
+test("nextBackoffMs: base, doubling, capped, guarded", () => {
+	assert.equal(A.nextBackoffMs(0, 15000, 120000), 15000);
+	assert.equal(A.nextBackoffMs(1, 15000, 120000), 30000);
+	assert.equal(A.nextBackoffMs(2, 15000, 120000), 60000);
+	assert.equal(A.nextBackoffMs(3, 15000, 120000), 120000);
+	assert.equal(A.nextBackoffMs(4, 15000, 120000), 120000); // capped
+	assert.equal(A.nextBackoffMs(-1, 15000, 120000), 15000); // negative guarded to base
+	assert.equal(A.nextBackoffMs(0), 15000); // defaults
 });
 
-test("deliveryChannelFor: nit/omitted ride the non-interrupting aside", () => {
-	assert.equal(A.deliveryChannelFor(undefined, false), "aside");
-	assert.equal(A.deliveryChannelFor("nit", false), "aside");
-	assert.equal(A.deliveryChannelFor("nit", true), "aside");
-});
-
-test("deliveryChannelFor: concern/blocker interrupt when not immune", () => {
-	assert.equal(A.deliveryChannelFor("concern", false), "interrupt");
-	assert.equal(A.deliveryChannelFor("blocker", false), "interrupt");
-});
-
-test("deliveryChannelFor: immune cooldown downgrades interrupts to aside", () => {
-	assert.equal(A.deliveryChannelFor("concern", true), "aside");
-	assert.equal(A.deliveryChannelFor("blocker", true), "aside");
-});
-
-test("dispositionFor: hold wins for lagging interrupts (even when immune)", () => {
-	// not lagging: same as deliveryChannelFor
-	assert.equal(A.dispositionFor("concern", false, false), "interrupt");
-	assert.equal(A.dispositionFor("blocker", false, false), "interrupt");
-	assert.equal(A.dispositionFor("concern", true, false), "aside"); // immune downgrade
-	// lagging interrupt → held, regardless of immune
-	assert.equal(A.dispositionFor("concern", false, true), "hold");
-	assert.equal(A.dispositionFor("blocker", false, true), "hold");
-	assert.equal(A.dispositionFor("blocker", true, true), "hold"); // hold > immune
-});
-
-test("dispositionFor: nits never hold (cheap, low-stakes)", () => {
-	assert.equal(A.dispositionFor(undefined, false, true), "aside");
-	assert.equal(A.dispositionFor("nit", false, true), "aside");
-	assert.equal(A.dispositionFor("nit", true, true), "aside");
+test("isTerminalTurn: terminal iff the assistant message made no tool calls", () => {
+	assert.equal(A.isTerminalTurn({ content: [{ type: "text" }] }), true);
+	assert.equal(A.isTerminalTurn({ content: [] }), true);
+	assert.equal(A.isTerminalTurn(undefined), true);
+	assert.equal(A.isTerminalTurn({ content: [{ type: "toolCall" }] }), false);
+	assert.equal(A.isTerminalTurn({ content: [{ type: "text" }, { type: "toolCall" }] }), false);
 });
 
 test("formatReconfirmPreamble: empty when nothing held, else lists held notes", () => {
@@ -157,6 +134,12 @@ test("formatAdvisoryContent: omits severity attr when absent (plain nit)", () =>
 	const c = A.formatAdvisoryContent([{ note: "tidy up" }]);
 	assert.doesNotMatch(c, /severity=/);
 	assert.match(c, /<advisory guidance=/);
+});
+
+test("formatAdvisoryContent: stale option tags advice as about an earlier step", () => {
+	const c = A.formatAdvisoryContent([{ note: "rename", severity: "nit" }], { stale: true });
+	assert.match(c, /context="raised about an earlier step"/);
+	assert.doesNotMatch(A.formatAdvisoryContent([{ note: "rename", severity: "nit" }]), /context=/);
 });
 
 test("formatTurnDelta: includes user, thinking, text, tool call + result", () => {
@@ -254,37 +237,129 @@ test("AdviseTool: held notes (onAdvice→false) stay unrecorded so they can re-f
 	assert.equal(calls.length, 3);
 });
 
+test("AdviseTool: markDelivered records dedup at the real delivery point", async () => {
+	const calls = [];
+	const tool = new A.AdviseTool((note, severity) => {
+		calls.push({ note, severity });
+		return false; // always held (high-severity path)
+	});
+	// the catch-up block delivers a held note, then records it:
+	tool.markDelivered("data race", "blocker");
+	// a later same-severity re-raise is now deduped before onAdvice fires
+	const r = await tool.execute("x", { note: "data race", severity: "blocker" });
+	assert.match(r.content[0].text, /Duplicate/);
+	assert.equal(calls.length, 0);
+	// but a genuine escalation past the recorded rank still passes
+	const tool2 = new A.AdviseTool((note, severity) => {
+		calls.push({ note, severity });
+		return false;
+	});
+	tool2.markDelivered("flaky", "concern");
+	await tool2.execute("y", { note: "flaky", severity: "blocker" });
+	assert.equal(calls.length, 1);
+});
+
 // ===========================================================================
-// 1b. runtime mechanics (offline, stub agent) — reconfirm-when-lagging
+// 1b. runtime mechanics (offline, stub agent) — always-hold + catch-up block
 //
-// Drives the real AdvisorRuntime + AdviseTool with a stub Agent so the
-// hold/reconfirm race is deterministic (a true E2E reconfirm would need the
-// live, nondeterministic advisor model; the /advisor test hook bypasses the
-// runtime/backlog entirely, so it can't exercise holding).
+// The hold/reconfirm/deliver flow needs the real runtime + a controllable
+// advisor, which a live E2E can't make deterministic (the /advisor test hook
+// bypasses the runtime entirely). So we drive runTurnBlock with a stub runtime,
+// and the real AdvisorRuntime with a stub Agent.
 // ===========================================================================
 
-// Wire a runtime the way the extension does: AdviseTool.onAdvice mirrors
-// deliverAdvice's hold decision (immune=false here). onPrompt(text, {rt,tool})
-// is invoked during each advisor review and simulates the advisor's reaction.
-function buildRuntimeHarness({ onPrompt } = {}) {
+// --- runTurnBlock orchestration, against a stub runtime ---
+function stubRuntime({ held = [], settleResult = "settled" } = {}) {
+	return {
+		_held: [...held],
+		waited: false,
+		get hasHeld() {
+			return this._held.length > 0;
+		},
+		takeHeld() {
+			return this._held.splice(0);
+		},
+		async waitUntilSettled() {
+			this.waited = true;
+			return settleResult;
+		},
+	};
+}
+const blockArgs = (over) => ({ consecutiveBlocks: 0, notify: () => {}, deliverHeld: () => {}, ...over });
+
+test("runTurnBlock: non-terminal with nothing held → no block, streak resets", async () => {
+	const rt = stubRuntime({ held: [] });
 	const delivered = [];
-	const prompts = [];
+	const n = await A.runTurnBlock(blockArgs({ terminal: false, runtime: rt, consecutiveBlocks: 3, deliverHeld: (x) => delivered.push(...x) }));
+	assert.equal(n, 0);
+	assert.equal(rt.waited, false, "must not block");
+	assert.equal(delivered.length, 0);
+});
+
+test("runTurnBlock: non-terminal + held + settled → delivers survivors, resets streak", async () => {
+	const delivered = [];
+	const rt = stubRuntime({ held: [{ note: "x", severity: "blocker" }], settleResult: "settled" });
+	const n = await A.runTurnBlock(blockArgs({ terminal: false, runtime: rt, consecutiveBlocks: 2, deliverHeld: (x) => delivered.push(...x) }));
+	assert.equal(n, 0);
+	assert.deepEqual(delivered, [{ note: "x", severity: "blocker" }]);
+});
+
+test("runTurnBlock: non-terminal + held + timeout → keeps held, doubles streak", async () => {
+	const delivered = [];
+	const rt = stubRuntime({ held: [{ note: "x", severity: "blocker" }], settleResult: "timeout" });
+	const n = await A.runTurnBlock(blockArgs({ terminal: false, runtime: rt, consecutiveBlocks: 1, deliverHeld: (x) => delivered.push(...x) }));
+	assert.equal(n, 2, "streak doubles via consecutiveBlocks+1");
+	assert.equal(delivered.length, 0);
+	assert.equal(rt.hasHeld, true, "held notes are kept, not taken");
+});
+
+test("runTurnBlock: terminal blocks unconditionally (even with nothing held)", async () => {
+	const rt = stubRuntime({ held: [], settleResult: "settled" });
+	const n = await A.runTurnBlock(blockArgs({ terminal: true, runtime: rt }));
+	assert.equal(rt.waited, true, "terminal must block until the advisor settles");
+	assert.equal(n, 0);
+});
+
+test("runTurnBlock: terminal timeout → delivers held best-effort (current, not stale)", async () => {
+	const delivered = [];
+	const rt = stubRuntime({ held: [{ note: "x", severity: "concern" }], settleResult: "timeout" });
+	const n = await A.runTurnBlock(blockArgs({ terminal: true, runtime: rt, deliverHeld: (x) => delivered.push(...x) }));
+	assert.equal(n, 0);
+	assert.deepEqual(delivered, [{ note: "x", severity: "concern" }]);
+});
+
+test("runTurnBlock: aborted (user Escape) → keeps held + streak, no delivery", async () => {
+	const delivered = [];
+	const rt = stubRuntime({ held: [{ note: "x", severity: "blocker" }], settleResult: "aborted" });
+	const n = await A.runTurnBlock(blockArgs({ terminal: false, runtime: rt, consecutiveBlocks: 2, deliverHeld: (x) => delivered.push(...x) }));
+	assert.equal(n, 2, "streak preserved");
+	assert.equal(delivered.length, 0);
+	assert.equal(rt.hasHeld, true);
+});
+
+// --- real AdvisorRuntime + stub Agent: hold → reconfirm → deliver/drop ---
+// onReview(text, {tool, reviewCount}) simulates the advisor's reaction per review.
+function buildIntegration({ onReview } = {}) {
+	const delivered = [];
 	let rt;
+	let reviewCount = 0;
 	const tool = new A.AdviseTool((note, severity) => {
-		const lagging = (rt?.backlog ?? 0) > 0;
-		const disp = A.dispositionFor(severity, false, lagging);
-		if (disp === "hold") {
+		// mirrors deliverAdvice: high severity always held, nits delivered now
+		if (A.isHighSeverity(severity)) {
 			rt.hold(note, severity);
 			return false;
 		}
-		delivered.push({ note, severity, disp });
+		delivered.push({ note, severity, kind: "nit" });
 		return true;
 	});
 	const agent = {
 		state: { messages: [], model: {} },
 		async prompt(text) {
-			prompts.push(text);
-			await onPrompt?.(text, { rt, tool });
+			// Defer like a real (multi-second, network) advisor review: the hold must
+			// land AFTER push()/turn_end returns, not synchronously inside it.
+			await new Promise((r) => setTimeout(r, 0));
+			reviewCount++;
+			await onReview?.(text, { tool, reviewCount });
 			this.state.messages.push({ role: "assistant", content: [], usage: {}, stopReason: "stop" });
 		},
 		abort() {},
@@ -293,72 +368,114 @@ function buildRuntimeHarness({ onPrompt } = {}) {
 		},
 	};
 	rt = new A.AdvisorRuntime(agent, tool, 0);
-	return { rt, tool, delivered, prompts };
+	// mirrors the extension's deliverHeld: steer survivors + record dedup
+	const deliverHeld = (notes) => {
+		for (const n of notes) {
+			delivered.push({ ...n, kind: "held" });
+			tool.markDelivered(n.note, n.severity);
+		}
+	};
+	const block = (terminal, consecutiveBlocks = 0) =>
+		A.runTurnBlock({ terminal, runtime: rt, consecutiveBlocks, notify: () => {}, deliverHeld });
+	return { rt, tool, delivered, deliverHeld, block, getReviewCount: () => reviewCount };
 }
 
-async function settle(rt) {
-	for (let i = 0; i < 400; i++) {
-		if (rt.idle) return;
-		await new Promise((r) => setTimeout(r, 5));
-	}
-	throw new Error("runtime did not settle");
-}
-
-test("runtime: a lone (non-lagging) turn delivers an interrupt immediately", async () => {
-	const h = buildRuntimeHarness({
-		onPrompt: async (_text, { tool }) => {
-			await tool.execute("x", { note: "unbounded recursion", severity: "blocker" });
+test("integration: a nit is delivered during review, not held, never blocks", async () => {
+	const h = buildIntegration({
+		onReview: async (_t, { tool, reviewCount }) => {
+			if (reviewCount === 1) await tool.execute("n1", { note: "rename var", severity: "nit" });
 		},
 	});
-	h.rt.push("Turn 1: agent wrote a recursive fn");
-	await settle(h.rt);
-	assert.equal(h.prompts.length, 1);
-	assert.equal(h.delivered.length, 1, "non-lagging blocker is delivered, not held");
-	assert.equal(h.delivered[0].disp, "interrupt");
+	h.rt.push("turn 1");
+	const cb = await h.block(false);
+	await h.rt.waitUntilSettled(5000);
+	assert.equal(cb, 0, "no block (nits never hold)");
+	assert.equal(h.rt.hasHeld, false);
+	assert.equal(h.delivered.length, 1);
+	assert.equal(h.delivered[0].kind, "nit");
 });
 
-test("runtime: blocker raised while lagging is HELD, then delivered on reconfirm", async () => {
-	let call = 0;
-	const h = buildRuntimeHarness({
-		onPrompt: async (text, { rt, tool }) => {
-			call++;
-			if (call === 1) {
-				// a fresher turn lands mid-review (now lagging), THEN advisor flags it
-				rt.push("Turn 2: agent kept editing");
-				const r = await tool.execute("a1", { note: "off-by-one in loop", severity: "blocker" });
-				assert.match(r.content[0].text, /Held/, "flagged-while-lagging note is held");
-			} else if (call === 2) {
-				// reconfirm review: issue still stands → re-raise (now caught up)
-				assert.match(text, /Held advisories/, "reconfirm preamble rides the next review");
-				await tool.execute("a2", { note: "off-by-one in loop", severity: "blocker" });
+test("integration: blocker held on turn 1, survives reconfirm, delivered after terminal block", async () => {
+	const h = buildIntegration({
+		onReview: async (text, { tool, reviewCount }) => {
+			if (reviewCount === 1) {
+				await tool.execute("a1", { note: "off-by-one", severity: "blocker" });
+			} else if (reviewCount === 2) {
+				assert.match(text, /Held advisories/, "reconfirm preamble rides review 2");
+				await tool.execute("a2", { note: "off-by-one", severity: "blocker" }); // still applies
 			}
 		},
 	});
-	h.rt.push("Turn 1: agent wrote a loop");
-	await settle(h.rt);
-	assert.equal(h.prompts.length, 2, "two reviews: original + reconfirm");
-	assert.match(h.prompts[1], /off-by-one in loop/, "held note text appears in reconfirm preamble");
-	assert.equal(h.delivered.length, 1, "blocker delivered exactly once, after reconfirm");
+	// turn 1: non-terminal, nothing held yet → no block; review 1 holds the blocker
+	h.rt.push("turn 1");
+	assert.equal(await h.block(false), 0);
+	await h.rt.waitUntilSettled(5000);
+	assert.equal(h.rt.hasHeld, true);
+	assert.equal(h.delivered.length, 0, "nothing delivered on the flagging turn");
+	// turn 2: terminal → block until settled; review 2 reconfirms; survivor delivered
+	h.rt.push("turn 2");
+	assert.equal(await h.block(true), 0);
+	assert.equal(h.getReviewCount(), 2);
+	assert.equal(h.delivered.length, 1);
+	assert.equal(h.delivered[0].kind, "held");
 	assert.equal(h.delivered[0].severity, "blocker");
 });
 
-test("runtime: held blocker is DROPPED when the reconfirm review stays silent", async () => {
-	let call = 0;
-	const h = buildRuntimeHarness({
-		onPrompt: async (_text, { rt, tool }) => {
-			call++;
-			if (call === 1) {
-				rt.push("Turn 2: agent already fixed it");
-				await tool.execute("a1", { note: "off-by-one in loop", severity: "blocker" });
-			}
-			// call 2: agent fixed it → advisor says nothing → held note evaporates
+test("integration: a blocker first raised ON the terminal turn is caught + delivered (Q1)", async () => {
+	// The advisor flags for the first time while the terminal turn is blocked; the
+	// agent did no follow-up (it's stopping), so it's delivered without a reconfirm.
+	const h = buildIntegration({
+		onReview: async (_text, { tool, reviewCount }) => {
+			if (reviewCount === 1) await tool.execute("a1", { note: "leaks an fd", severity: "blocker" });
 		},
 	});
-	h.rt.push("Turn 1: agent wrote a loop");
-	await settle(h.rt);
-	assert.equal(h.prompts.length, 2);
-	assert.match(h.prompts[1], /Held advisories/, "reconfirm was still offered");
-	assert.equal(h.delivered.length, 0, "silent reconfirm drops the stale note");
+	h.rt.push("final turn");
+	assert.equal(await h.block(true), 0, "terminal block waits for the review that raises the blocker");
+	assert.equal(h.getReviewCount(), 1);
+	assert.equal(h.delivered.length, 1, "blocker raised on the terminal turn lands before idle");
+	assert.equal(h.delivered[0].kind, "held");
+	assert.equal(h.delivered[0].severity, "blocker");
+	assert.equal(h.rt.hasHeld, false);
+});
+
+test("integration: held blocker is dropped when the reconfirm review recants", async () => {
+	const h = buildIntegration({
+		onReview: async (_text, { tool, reviewCount }) => {
+			if (reviewCount === 1) await tool.execute("a1", { note: "off-by-one", severity: "blocker" });
+			// review 2: agent fixed it → advisor stays silent → held note evaporates
+		},
+	});
+	h.rt.push("turn 1");
+	await h.block(false);
+	await h.rt.waitUntilSettled(5000);
+	assert.equal(h.rt.hasHeld, true);
+	h.rt.push("turn 2");
+	assert.equal(await h.block(true), 0);
+	assert.equal(h.delivered.length, 0, "recanted blocker is dropped, not delivered");
+	assert.equal(h.rt.hasHeld, false);
+});
+
+test("runtime.waitUntilSettled: settles on drain, times out, and aborts", async () => {
+	let resolvePrompt;
+	const agent = {
+		state: { messages: [], model: {} },
+		prompt() {
+			return new Promise((r) => {
+				resolvePrompt = r;
+			});
+		},
+		abort() {},
+		reset() {},
+	};
+	const rt = new A.AdvisorRuntime(agent, new A.AdviseTool(() => true), 0);
+	rt.push("hang"); // drain starts, prompt hangs → not idle
+	assert.equal(await rt.waitUntilSettled(20), "timeout");
+	const ac = new AbortController();
+	const p = rt.waitUntilSettled(2000, ac.signal);
+	ac.abort();
+	assert.equal(await p, "aborted");
+	resolvePrompt(); // let the drain finish
+	assert.equal(await rt.waitUntilSettled(2000), "settled");
 });
 
 // ===========================================================================
@@ -412,7 +529,13 @@ test("render: plain nit shows NIT tag", async () => {
 });
 
 // ===========================================================================
-// 4. pi harness (E2E) — interrupting / retriggering / immune cooldown
+// 4. pi harness (E2E) — nit delivers immediately + triggers a turn
+//
+// Only the nit path is live-testable: the /advisor test hook runs under
+// ADVISOR_NO_REVIEW (no advisor model), so high-severity notes have no runtime
+// to hold them and no turn_end block to deliver them. The hold → reconfirm →
+// catch-up-block → deliver flow is covered deterministically by the offline
+// runtime tests above.
 // ===========================================================================
 
 class RpcPi {
@@ -490,70 +613,19 @@ class RpcPi {
 }
 
 if (process.env.ADVISOR_E2E) {
-	test("E2E: nit is non-interrupting but lands immediately (not deferred)", async () => {
+	test("E2E: a nit is delivered immediately, triggers a turn, and lands in transcript", async () => {
 		const pi = new RpcPi();
 		try {
 			await pi.sleep(2500);
 			const before = pi.agentStarts;
-			pi.prompt("/advisor test nit NITSENTINEL tidy later");
-			await pi.sleep(4000);
-			assert.equal(pi.agentStarts, before, "nit must NOT trigger an agent turn");
-			// regression: the nit must land in the transcript right away (idle aside),
-			// NOT sit deferred until the next user message (the old nextTurn bug).
-			assert.ok(JSON.stringify(await pi.getMessages()).includes("NITSENTINEL"), "nit advisory lands immediately while idle");
-		} finally {
-			pi.kill();
-		}
-	});
-
-	test("E2E: blocker interrupts/retriggers a turn and lands in transcript", async () => {
-		const pi = new RpcPi();
-		try {
-			await pi.sleep(2500);
-			const before = pi.agentStarts;
-			pi.prompt("/advisor test blocker BLOCKSENTINEL stop and reconsider");
-			await pi.waitFor(() => pi.agentStarts > before, 30000, "blocker-triggered agent_start");
+			pi.prompt("/advisor test nit NITSENTINEL tidy this later");
+			// nits now steer + triggerTurn: an idle agent wakes to act on them.
+			await pi.waitFor(() => pi.agentStarts > before, 30000, "nit-triggered agent_start");
 			await pi.waitFor(() => pi.agentEnds >= 1, 60000, "triggered turn agent_end");
 			const adv = (await pi.getMessages()).find(
-				(m) => m.role === "custom" && m.customType === "advisory" && JSON.stringify(m).includes("BLOCKSENTINEL"),
+				(m) => m.role === "custom" && m.customType === "advisory" && JSON.stringify(m).includes("NITSENTINEL"),
 			);
-			assert.ok(adv, "blocker advisory should be in the transcript as an advisory custom message");
-			assert.equal(adv.details.notes[0].severity, "blocker", "advisory carries blocker severity");
-		} finally {
-			pi.kill();
-		}
-	});
-
-	test("E2E: concern interrupts when not immune", async () => {
-		const pi = new RpcPi();
-		try {
-			await pi.sleep(2500);
-			const before = pi.agentStarts;
-			pi.prompt("/advisor test concern CONCERNSENTINEL fragile approach");
-			await pi.waitFor(() => pi.agentStarts > before, 30000, "concern-triggered agent_start");
-			assert.ok(pi.agentStarts > before, "concern must trigger a turn when not immune");
-		} finally {
-			pi.kill();
-		}
-	});
-
-	test("E2E: immune cooldown downgrades a concern right after a blocker", async () => {
-		const pi = new RpcPi();
-		try {
-			await pi.sleep(2500);
-			// blocker triggers a turn and arms the immune fence (3 turns)
-			const b0 = pi.agentStarts;
-			pi.prompt("/advisor test blocker IMMUNEBLOCK arm the fence");
-			await pi.waitFor(() => pi.agentStarts > b0, 30000, "blocker agent_start");
-			await pi.waitFor(() => pi.agentEnds >= 1, 60000, "blocker turn end");
-			await pi.sleep(1000);
-			// a concern within the immune window must NOT trigger another turn
-			const c0 = pi.agentStarts;
-			pi.prompt("/advisor test concern IMMUNECONCERN should be downgraded");
-			await pi.sleep(5000);
-			assert.equal(pi.agentStarts, c0, "concern during immune cooldown must be downgraded to a non-interrupting aside");
-			// downgraded aside lands immediately in the transcript (no new turn)
-			assert.ok(JSON.stringify(await pi.getMessages()).includes("IMMUNECONCERN"), "downgraded concern lands immediately as an aside");
+			assert.ok(adv, "nit advisory lands in the transcript as an advisory custom message");
 		} finally {
 			pi.kill();
 		}
