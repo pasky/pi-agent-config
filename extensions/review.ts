@@ -33,14 +33,15 @@ const DEFAULT_SINCE = "HEAD~1";
 // Returns the chosen mode name, or undefined if that mode isn't actually defined
 // in modes.json — in which case the caller should leave the mode unset (and let
 // the review run on the current model) rather than mislabel it as deep/smart.
-// The "already deep?" check uses an EXACT match (model + thinking level), so a
-// custom selection that merely shares deep's model isn't mistaken for deep.
+// inferCurrentMode uses the canonical mode inference (shared with the modes
+// overlay): for a thinking-capable model it matches the thinking level exactly,
+// so a custom selection that merely shares deep's model isn't mistaken for deep.
 async function resolveDefaultReviewMode(
 	cwd: string,
-	currentModel: { provider?: string; id?: string } | undefined,
+	currentModel: { provider?: string; id?: string; reasoning?: unknown } | undefined,
 	currentThinkingLevel: string,
 ): Promise<string | undefined> {
-	const current = await inferCurrentMode(cwd, currentModel, currentThinkingLevel, { exact: true });
+	const current = await inferCurrentMode(cwd, currentModel, currentThinkingLevel);
 	const candidate = current === "deep" ? "smart" : "deep";
 	// Only use it if it resolves to a real mode; otherwise stay unset.
 	return (await loadModeSpec(cwd, candidate)) ? candidate : undefined;
