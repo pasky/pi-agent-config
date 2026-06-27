@@ -3,4 +3,5 @@
 - Any subagents use for research should use the deep mode.
 - When `git rebase` etc., make sure to GIT_EDITOR=true to avoid hangs
 - Never mask out issues by using patterns like `kill 3273547 2>/dev/null; echo "killed"`
+- After completing a change (code/docs), commit it with a clear message once it builds/tests green — don't leave the work uncommitted waiting to be asked.
 - Anytime you are going to call `find`, stop and think - 80% likelihood that you are taking a stupid approach (instead of loading an object from storage properly, using `git grep`, etc.), all finds take very long and are I/O heavy.
