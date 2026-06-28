@@ -10,11 +10,15 @@
  *                                 is APPENDED to the default review prompt
  *   /review -mode deep origin/dev be ruthless about edge cases
  *
- * The finished review is added to the conversation as a permanent transcript
- * block (same renderer as the subagent tool / /btw). The model sees it as a
- * single `user` message wrapping the whole thing — request, commit log and the
- * review — tagged with the reviewer model/mode so the main model knows it came
- * from a separate reviewer. Follow up with e.g. "consider the review above".
+ * The command runs the reviewer in the BACKGROUND (fire-and-forget, like /btw):
+ * it returns immediately so the interactive loop keeps handling input while the
+ * review runs, instead of blocking the handler (which would drop typed input and
+ * throw "Agent is already processing"). When the review finishes it is added to
+ * the conversation as a permanent transcript block (same renderer as the
+ * subagent tool / /btw). The model sees it as a single `user` message wrapping
+ * the whole thing — request, commit log and the review — tagged with the
+ * reviewer model/mode so the main model knows it came from a separate reviewer.
+ * Follow up with e.g. "consider the review above".
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -186,6 +190,16 @@ const ReviewToolParams = Type.Object({
 });
 
 export default function (pi: ExtensionAPI) {
+	// Background /review bookkeeping (mirrors /btw): a per-invocation counter for
+	// unique widget keys, and widgets that wait for turn_end to remove themselves
+	// (a follow-up-delivered review block only renders at the turn boundary).
+	let reviewCounter = 0;
+	const pendingWidgetRemovals = new Map<string, () => void>();
+	pi.on("turn_end", () => {
+		for (const [, resolve] of pendingWidgetRemovals) resolve();
+		pendingWidgetRemovals.clear();
+	});
+
 	// Shared review logic used by both the /review command and the `review` tool:
 	// collect the commit log for the range, run a reviewer subagent over it, and
 	// build the tagged transcript/tool content. Caller handles UI (widget vs.
@@ -293,62 +307,83 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
-			// --- Run the review, live progress in a widget. Always clear the
-			// widget afterwards (even on throw/abort) so it can never get stuck. ---
 			const range = `${since}..`;
-			ctx.ui.setWidget(WIDGET_KEY, [`⏳ review ${range} (${model.provider}/${model.id})...`], { placement: "aboveEditor" });
-			let outcome: Awaited<ReturnType<typeof performReview>>;
-			try {
-				outcome = await performReview({
-					cwd: ctx.cwd,
-					modelRegistry: ctx.modelRegistry,
-					model,
-					thinkingLevel,
-					modeOpt,
-					since,
-					prompt,
-					parentSessionFile: ctx.sessionManager?.getSessionFile(),
-					signal: ctx.signal,
-					onProgress: (r, rng) => ctx.ui.setWidget(
-						WIDGET_KEY,
-						(_tui, theme) => renderResults([r], { expanded: false, label: `review ${rng}` }, theme),
-						{ placement: "aboveEditor" },
-					),
-				});
-			} finally {
-				ctx.ui.setWidget(WIDGET_KEY, undefined);
-			}
+			// Unique widget key per invocation so concurrent /review's don't clobber.
+			const widgetKey = `${WIDGET_KEY}-${++reviewCounter}`;
+			ctx.ui.setWidget(widgetKey, [`⏳ review ${range} (${model.provider}/${model.id})...`], { placement: "aboveEditor" });
 
-			if (!outcome.ok) {
-				ctx.ui.notify(outcome.error, "error");
-				return;
-			}
-			const { result, reviewText, failed, contentText } = outcome;
+			// Fire-and-forget — run the review in the background (like /btw) instead
+			// of awaiting it in the handler. A handler that blocks on long work keeps
+			// the session out of its "streaming" state, so typed input is silently
+			// dropped and then replayed into the review's own turn, throwing "Agent is
+			// already processing". Returning immediately lets the interactive loop keep
+			// handling input normally while the review runs.
+			performReview({
+				cwd: ctx.cwd,
+				modelRegistry: ctx.modelRegistry,
+				model,
+				thinkingLevel,
+				modeOpt,
+				since,
+				prompt,
+				parentSessionFile: ctx.sessionManager?.getSessionFile(),
+				// no abort signal — runs to completion (matches /btw). ctx.signal would
+				// be stale here: the handler returns immediately, so it no longer tracks
+				// a live agent run.
+				onProgress: (r, rng) => ctx.ui.setWidget(
+					widgetKey,
+					(_tui, theme) => renderResults([r], { expanded: false, label: `review ${rng}` }, theme),
+					{ placement: "aboveEditor" },
+				),
+			}).then(async (outcome) => {
+				if (!outcome.ok) {
+					ctx.ui.setWidget(widgetKey, undefined);
+					ctx.ui.notify(outcome.error, "error");
+					return;
+				}
+				const { result, reviewText, failed, contentText } = outcome;
 
-			// Hard failure with nothing to keep: just notify, nothing to persist.
-			if (failed && !reviewText && result.displayItems.length === 0) {
-				ctx.ui.notify(`review failed: ${result.errorMessage || "unknown error"}`, "error");
-				return;
-			}
-			if (failed) {
-				ctx.ui.notify(`review incomplete (${result.errorMessage || "error"}); partial output kept`, "warning");
-			}
+				// Hard failure with nothing to keep: just notify, nothing to persist.
+				if (failed && !reviewText && result.displayItems.length === 0) {
+					ctx.ui.setWidget(widgetKey, undefined);
+					ctx.ui.notify(`review failed: ${result.errorMessage || "unknown error"}`, "error");
+					return;
+				}
+				if (failed) {
+					ctx.ui.notify(`review incomplete (${result.errorMessage || "error"}); partial output kept`, "warning");
+				}
 
-			// The model sees one `user` message wrapping the whole pair, tagged with
-			// the reviewer model/mode (and marked incomplete on failure). On failure
-			// we still persist a block so nothing — including partial work — is lost.
-			// Permanent transcript block (rich render via details + renderer above).
-			// triggerTurn: true so the main session model automatically responds to
-			// the finalized review (e.g. acting on the reviewer's findings).
-			pi.sendMessage<ReviewDetails>(
-				{
-					customType: REVIEW_TYPE,
-					content: [{ type: "text", text: contentText }],
-					display: true,
-					details: { range: outcome.range, result },
-				},
-				{ triggerTurn: true },
-			);
+				// Deliver the finished review. When the agent is idle, trigger a turn so
+				// the main model reacts to the findings. When it's busy (the user started
+				// a turn while the review ran in the background), queue it as a follow-up
+				// so it's delivered when that turn ends — instead of throwing "Agent is
+				// already processing". On failure we still persist a block so nothing
+				// (including partial work) is lost. The model sees one tagged `user`
+				// message wrapping the whole pair (rich render via the renderer above).
+				const idle = ctx.isIdle();
+				pi.sendMessage<ReviewDetails>(
+					{
+						customType: REVIEW_TYPE,
+						content: [{ type: "text", text: contentText }],
+						display: true,
+						details: { range: outcome.range, result },
+					},
+					idle ? { triggerTurn: true } : { deliverAs: "followUp" },
+				);
+
+				// A follow-up-delivered block only renders when the current turn ends —
+				// keep a widget up until then so the finished review isn't invisible.
+				if (!idle) {
+					ctx.ui.setWidget(widgetKey, [`✓ review ${outcome.range} ready — applying after the current turn`], { placement: "aboveEditor" });
+					await new Promise<void>((resolve) => pendingWidgetRemovals.set(widgetKey, resolve));
+				}
+				ctx.ui.setWidget(widgetKey, undefined);
+			}).catch((err) => {
+				ctx.ui.setWidget(widgetKey, undefined);
+				ctx.ui.notify(`review failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+			});
+
+			// Command returns immediately — the review runs in the background.
 		},
 	});
 
