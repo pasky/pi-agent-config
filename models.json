@@ -7,7 +7,7 @@
             "openRouterRouting": {
               "order": ["atlas-cloud", "parasail", "z-ai"],
               "quantizations": ["fp8"],
-              "allow_fallbacks": true
+              "allow_fallbacks": false
             }
           }
         }
