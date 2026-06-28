@@ -353,13 +353,15 @@ export default function (pi: ExtensionAPI) {
 					ctx.ui.notify(`review incomplete (${result.errorMessage || "error"}); partial output kept`, "warning");
 				}
 
-				// Deliver the finished review. When the agent is idle, trigger a turn so
-				// the main model reacts to the findings. When it's busy (the user started
-				// a turn while the review ran in the background), queue it as a follow-up
-				// so it's delivered when that turn ends — instead of throwing "Agent is
-				// already processing". On failure we still persist a block so nothing
-				// (including partial work) is lost. The model sees one tagged `user`
-				// message wrapping the whole pair (rich render via the renderer above).
+				// Deliver the finished review. Pass BOTH triggerTurn and deliverAs so core
+				// picks the right path atomically at its own isStreaming check (no
+				// read-then-act race): when streaming it takes deliverAs:"followUp" (the
+				// review waits for the current turn to end, then the model reacts to it in
+				// a fresh turn — it does NOT steer/interrupt mid-turn); when idle it falls
+				// through to triggerTurn (responds immediately). Either way nothing throws
+				// "Agent is already processing". On failure we still persist a block so
+				// nothing (including partial work) is lost. The model sees one tagged
+				// `user` message wrapping the whole pair (rich render via the renderer).
 				const idle = ctx.isIdle();
 				pi.sendMessage<ReviewDetails>(
 					{
@@ -368,7 +370,7 @@ export default function (pi: ExtensionAPI) {
 						display: true,
 						details: { range: outcome.range, result },
 					},
-					idle ? { triggerTurn: true } : { deliverAs: "followUp" },
+					{ triggerTurn: true, deliverAs: "followUp" },
 				);
 
 				// A follow-up-delivered block only renders when the current turn ends —
