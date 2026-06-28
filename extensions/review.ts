@@ -190,14 +190,15 @@ const ReviewToolParams = Type.Object({
 });
 
 export default function (pi: ExtensionAPI) {
-	// Background /review bookkeeping (mirrors /btw): a per-invocation counter for
-	// unique widget keys, and widgets that wait for turn_end to remove themselves
-	// (a follow-up-delivered review block only renders at the turn boundary).
+	// Background /review bookkeeping: a per-invocation counter for unique widget
+	// keys, plus a session "epoch" bumped on every session_start. A review runs
+	// detached from the command handler, so if the user switches/reloads the
+	// session while it's in flight we use the epoch to abandon delivery rather than
+	// write into the wrong session or poke a now-stale UI context.
 	let reviewCounter = 0;
-	const pendingWidgetRemovals = new Map<string, () => void>();
-	pi.on("turn_end", () => {
-		for (const [, resolve] of pendingWidgetRemovals) resolve();
-		pendingWidgetRemovals.clear();
+	let sessionEpoch = 0;
+	pi.on("session_start", () => {
+		sessionEpoch++;
 	});
 
 	// Shared review logic used by both the /review command and the `review` tool:
@@ -284,6 +285,11 @@ export default function (pi: ExtensionAPI) {
 	pi.registerCommand("review", {
 		description: "Review git changes via a subagent, kept in the transcript + context (-mode <name>, [git-since] [prompt])",
 		handler: async (args, ctx) => {
+			// Snapshot the session generation; the detached completion below only
+			// touches the session/UI while this still matches (see session_start above).
+			const epoch = sessionEpoch;
+			const stillCurrent = () => sessionEpoch === epoch;
+
 			const { modeOpt: modeArg, since, prompt } = parseReviewArgs(args, DEFAULT_SINCE);
 
 			if (!ctx.model) {
@@ -336,6 +342,9 @@ export default function (pi: ExtensionAPI) {
 					{ placement: "aboveEditor" },
 				),
 			}).then(async (outcome) => {
+				// Session was switched/reloaded while the review ran: drop it silently
+				// (its widget belonged to the old session and is already gone).
+				if (!stillCurrent()) return;
 				if (!outcome.ok) {
 					ctx.ui.setWidget(widgetKey, undefined);
 					ctx.ui.notify(outcome.error, "error");
@@ -353,16 +362,29 @@ export default function (pi: ExtensionAPI) {
 					ctx.ui.notify(`review incomplete (${result.errorMessage || "error"}); partial output kept`, "warning");
 				}
 
-				// Deliver the finished review. Pass BOTH triggerTurn and deliverAs so core
-				// picks the right path atomically at its own isStreaming check (no
-				// read-then-act race): when streaming it takes deliverAs:"followUp" (the
-				// review waits for the current turn to end, then the model reacts to it in
-				// a fresh turn — it does NOT steer/interrupt mid-turn); when idle it falls
-				// through to triggerTurn (responds immediately). Either way nothing throws
-				// "Agent is already processing". On failure we still persist a block so
-				// nothing (including partial work) is lost. The model sees one tagged
-				// `user` message wrapping the whole pair (rich render via the renderer).
-				const idle = ctx.isIdle();
+				// Deliver the finished review. We deliberately do NOT ride the agent's
+				// follow-up queue (deliverAs:"followUp"): ESC/abort clears that queue via
+				// clearQueue()->agent.clearAllQueues(), and a custom message isn't mirrored
+				// into the editor-restore path, so the finished review would be silently
+				// lost — exactly the work /review exists to preserve. Instead wait for an
+				// idle moment and deliver via triggerTurn, which goes through the
+				// non-streaming append path: it persists the block to the session
+				// immediately and then has the model react to the findings.
+				//
+				// waitForIdle() resolves on a natural turn end OR an abort, so the review is
+				// delivered (and persisted) either way. Auto-triggering a turn right after a
+				// user ESC is a tad surprising, but it's acceptable: the review was
+				// user-requested, the block is persisted by the append before the reaction
+				// turn runs, and that reaction turn is itself abortable. The model sees one
+				// tagged `user` message wrapping the whole pair (rich render via renderer).
+				if (!ctx.isIdle()) {
+					ctx.ui.setWidget(widgetKey, [`✓ review ${outcome.range} ready — applying once the agent is idle`], { placement: "aboveEditor" });
+					do {
+						await ctx.waitForIdle();
+					} while (!ctx.isIdle());
+				}
+				// Re-check after awaiting: the session may have been replaced meanwhile.
+				if (!stillCurrent()) return;
 				pi.sendMessage<ReviewDetails>(
 					{
 						customType: REVIEW_TYPE,
@@ -370,17 +392,11 @@ export default function (pi: ExtensionAPI) {
 						display: true,
 						details: { range: outcome.range, result },
 					},
-					{ triggerTurn: true, deliverAs: "followUp" },
+					{ triggerTurn: true },
 				);
-
-				// A follow-up-delivered block only renders when the current turn ends —
-				// keep a widget up until then so the finished review isn't invisible.
-				if (!idle) {
-					ctx.ui.setWidget(widgetKey, [`✓ review ${outcome.range} ready — applying after the current turn`], { placement: "aboveEditor" });
-					await new Promise<void>((resolve) => pendingWidgetRemovals.set(widgetKey, resolve));
-				}
 				ctx.ui.setWidget(widgetKey, undefined);
 			}).catch((err) => {
+				if (!stillCurrent()) return;
 				ctx.ui.setWidget(widgetKey, undefined);
 				ctx.ui.notify(`review failed: ${err instanceof Error ? err.message : String(err)}`, "error");
 			});
