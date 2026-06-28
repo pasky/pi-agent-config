@@ -5,9 +5,8 @@
         "z-ai/glm-5.2": {
           "compat": {
             "openRouterRouting": {
-              "order": ["parasail", "streamlake"],
+              "order": ["atlas-cloud", "parasail", "z-ai"],
               "quantizations": ["fp8"],
-              "require_parameters": true,
               "allow_fallbacks": true
             }
           }
