@@ -132,18 +132,14 @@ function formatClock(ms: number): string {
 }
 
 /**
- * A short single-line preview of the prompt for notifications. Collapses
- * whitespace and, when truncating, cuts on a word boundary (never mid-word)
- * before appending an ellipsis.
+ * Render the prompt for a notification. Deliberately does NOT truncate: `/nw`
+ * runs this prompt unattended hours later, so the confirmation/status line is
+ * the user's one chance to verify exactly what they scheduled. Cutting it off
+ * anywhere would hide part of that commitment. We only collapse whitespace so
+ * it fits on a notification line.
  */
-export function preview(prompt: string, max = 60): string {
-	const clean = prompt.replace(/\s+/g, " ").trim();
-	if (clean.length <= max) return clean;
-	const cut = clean.slice(0, max);
-	const lastSpace = cut.lastIndexOf(" ");
-	// Only honor the word boundary if it doesn't chop off too much (>half).
-	const base = lastSpace > max / 2 ? cut.slice(0, lastSpace) : cut;
-	return `${base.trimEnd()}\u2026`;
+export function preview(prompt: string): string {
+	return prompt.replace(/\s+/g, " ").trim();
 }
 
 export default function (pi: ExtensionAPI) {
