@@ -77,9 +77,12 @@ function requestEntries(pi: ExtensionAPI): Promise<ProviderUsageEntry[] | undefi
 				resolve(undefined);
 			}
 		}, CORE_TIMEOUT_MS);
+		// Use cached data (no force): `resetAt` is a slow-moving timestamp and
+		// sub-core already refreshes it every ~60s, so the cache is fresh enough.
+		// A forced multi-provider network fetch could easily exceed our timeout
+		// and produce a spurious "could not read usage" error.
 		pi.events.emit("sub-core:request", {
 			type: "entries",
-			force: true,
 			reply: (payload: { entries?: ProviderUsageEntry[] }) => {
 				if (done) return;
 				done = true;
@@ -126,6 +129,21 @@ function formatDuration(ms: number): string {
 
 function formatClock(ms: number): string {
 	return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+/**
+ * A short single-line preview of the prompt for notifications. Collapses
+ * whitespace and, when truncating, cuts on a word boundary (never mid-word)
+ * before appending an ellipsis.
+ */
+export function preview(prompt: string, max = 60): string {
+	const clean = prompt.replace(/\s+/g, " ").trim();
+	if (clean.length <= max) return clean;
+	const cut = clean.slice(0, max);
+	const lastSpace = cut.lastIndexOf(" ");
+	// Only honor the word boundary if it doesn't chop off too much (>half).
+	const base = lastSpace > max / 2 ? cut.slice(0, lastSpace) : cut;
+	return `${base.trimEnd()}\u2026`;
 }
 
 export default function (pi: ExtensionAPI) {
@@ -178,7 +196,7 @@ export default function (pi: ExtensionAPI) {
 				if (pending) {
 					const remaining = pending.fireAt - Date.now();
 					ctx.ui.notify(
-						`/nw: resuming in ${formatDuration(remaining)} (at ${formatClock(pending.fireAt)}) — "${pending.prompt.slice(0, 60)}". /nw cancel to abort.`,
+						`/nw: resuming in ${formatDuration(remaining)} (at ${formatClock(pending.fireAt)}) — "${preview(pending.prompt)}". /nw cancel to abort.`,
 						"info",
 					);
 				} else {
@@ -242,6 +260,23 @@ export default function (pi: ExtensionAPI) {
 			);
 		},
 	});
+
+	// A pending job binds the session it was scheduled in (its widget, notify,
+	// and the eventual sendUserMessage all target that session). If the user
+	// switches/forks/reloads the session — possibly hours later — that binding
+	// goes stale and the prompt would fire into the wrong session. Cancel on any
+	// such transition rather than misfire. (session_before_switch fires while the
+	// old ctx is still valid so we can cleanly clear the widget; session_start
+	// covers forks/reloads that land in a fresh session.)
+	const cancelOnSessionChange = (_event: unknown, ctx: ExtensionContext) => {
+		if (pending) {
+			const prompt = pending.prompt;
+			cancelPending(ctx, false);
+			if (ctx.hasUI) ctx.ui.notify(`/nw: cancelled deferred prompt (session changed) — "${preview(prompt)}"`, "warning");
+		}
+	};
+	pi.on("session_before_switch", cancelOnSessionChange);
+	pi.on("session_start", cancelOnSessionChange);
 
 	pi.on("session_shutdown", () => {
 		if (pending) {
