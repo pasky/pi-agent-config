@@ -11,6 +11,11 @@
  *     would overflow setTimeout; chunks the first wait to <= 2^31-1 ms
  *   - preview: collapses whitespace, never truncates
  *
+ * ...plus command-handler regression tests (with a mocked `pi`, feasible since
+ * nw.ts's pi imports are type-only): scheduling off the live current-state when
+ * the entries endpoint is TTL-dropped, the cold-start forced-fetch fallback,
+ * and the no-current-provider error path.
+ *
  * Run:  node extensions/nw.test.mjs        (from the agent dir)
  */
 
@@ -45,7 +50,7 @@ const { pickNextResetWindow, scheduleAt, preview } = nw;
 // Mock harness for the command handler (nw.ts has type-only pi imports).
 function loadCommand({ currentState, forcedEntries = [] }) {
 	const commands = {};
-	let forcedFetch = false;
+	let forcedFetches = 0;
 	const pi = {
 		registerCommand: (n, o) => (commands[n] = o),
 		on: () => {},
@@ -55,13 +60,13 @@ function loadCommand({ currentState, forcedEntries = [] }) {
 			emit: (name, p) => {
 				if (name !== "sub-core:request") return;
 				if (p.type === "current") return p.reply({ state: currentState });
-				forcedFetch = !!p.force;
+				if (p.force) forcedFetches++;
 				p.reply({ entries: p.force ? forcedEntries : [] });
 			},
 		},
 	};
 	nw.default(pi);
-	return { handler: commands.nw.handler, forced: () => forcedFetch };
+	return { handler: commands.nw.handler, forcedFetches: () => forcedFetches };
 }
 function mockCtx() {
 	const widgets = {};
@@ -172,13 +177,13 @@ await test("preview: collapses whitespace, keeps full text", () => {
 await test("handler: schedules from live current-state when entries are TTL-dropped", async () => {
 	// Handler uses real Date.now(), so this must be a genuine future time.
 	const win = { label: "5h", usedPercent: 32, resetAt: new Date(Date.now() + 75 * 60e3).toISOString() };
-	const { handler, forced } = loadCommand({
+	const { handler, forcedFetches } = loadCommand({
 		currentState: { provider: "anthropic", usage: { provider: "anthropic", windows: [win] } },
 		forcedEntries: [],
 	});
 	const { ctx, notes } = mockCtx();
 	await handler("overnight job", ctx);
-	assert.equal(forced(), false); // never needed the forced fallback
+	assert.equal(forcedFetches(), 0); // never needed the forced fallback
 	const last = notes.at(-1);
 	assert.equal(last.t, "info");
 	assert.match(last.m, /scheduled — anthropic 5h/);
@@ -187,13 +192,13 @@ await test("handler: schedules from live current-state when entries are TTL-drop
 
 await test("handler: cold-start falls back to one forced fetch", async () => {
 	const win = { label: "5h", usedPercent: 1, resetAt: new Date(Date.now() + 2e6).toISOString() };
-	const { handler, forced } = loadCommand({
+	const { handler, forcedFetches } = loadCommand({
 		currentState: { provider: "anthropic", usage: { provider: "anthropic", windows: [] } },
 		forcedEntries: [{ provider: "anthropic", usage: { provider: "anthropic", windows: [win] } }],
 	});
 	const { ctx, notes } = mockCtx();
 	await handler("job", ctx);
-	assert.equal(forced(), true);
+	assert.equal(forcedFetches(), 1); // exactly one forced fetch, no more
 	assert.match(notes.at(-1).m, /scheduled/);
 });
 

@@ -16,11 +16,13 @@
  *   /nw cancel       cancel the pending job
  *
  * Data source: the sub-core extension (@marckrenn/pi-sub-core) via its event
- * bus. We ask sub-core which provider is current (it maps the active model to a
- * provider name itself, e.g. openai-codex -> codex) and read that provider's
- * usage windows from sub-core's cache; on a cache miss we do one forced fetch.
- * We then pick the window that resets soonest (the short rolling window, "5h"
- * on Anthropic) and schedule off its `resetAt` timestamp.
+ * bus. We ask sub-core for its live current-state (`{ provider, usage }`) — the
+ * same source the status bar renders (sub-core maps the active model to a
+ * provider name itself, e.g. openai-codex -> codex), and it is not subject to
+ * the entries endpoint's ~60s cache TTL. We read that provider's usage windows
+ * from it; only on a cold miss (no reset time yet) do we force one entries
+ * fetch. We then pick the window that resets soonest (the short rolling window,
+ * "5h" on Anthropic) and schedule off its `resetAt` timestamp.
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
