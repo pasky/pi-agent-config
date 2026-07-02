@@ -55,7 +55,18 @@ interface ProviderUsageEntry {
 
 // --- sub-core event-bus requests ------------------------------------------
 
-function requestCurrentProvider(pi: ExtensionAPI): Promise<string | undefined> {
+interface CurrentState {
+	provider?: string;
+	usage?: UsageSnapshot;
+}
+
+// The current provider + its usage snapshot, straight from sub-core's live
+// state (`lastState`) for the current model's provider. Crucially this is the
+// SAME source the status bar renders, and it is NOT subject to the entries
+// endpoint's ~60s cache TTL, which drops entries whose last fetch is stale
+// (common during long turns). So `usage.windows` here carries `resetAt`
+// whenever the bar shows a reset time.
+function requestCurrentState(pi: ExtensionAPI): Promise<CurrentState | undefined> {
 	return new Promise((resolve) => {
 		let done = false;
 		const timer = setTimeout(() => {
@@ -66,20 +77,18 @@ function requestCurrentProvider(pi: ExtensionAPI): Promise<string | undefined> {
 		}, CORE_TIMEOUT_MS);
 		pi.events.emit("sub-core:request", {
 			type: "current",
-			reply: (payload: { state?: { provider?: string } }) => {
+			reply: (payload: { state?: CurrentState }) => {
 				if (done) return;
 				done = true;
 				clearTimeout(timer);
-				resolve(payload?.state?.provider);
+				resolve(payload?.state);
 			},
 		});
 	});
 }
 
-// Read usage entries from sub-core. Default is the cache (instant): `resetAt` is
-// slow-moving and sub-core refreshes it every ~60s, so cached data is fresh
-// enough and avoids a spurious timeout from a forced multi-provider fetch. Pass
-// force=true only as a cold-cache fallback (sub-core then fetches).
+// Force sub-core to fetch, then return fresh entries. Used only as a cold-cache
+// fallback when the live current-state has no window with a reset time yet.
 function requestEntries(pi: ExtensionAPI, force = false): Promise<ProviderUsageEntry[] | undefined> {
 	return new Promise((resolve) => {
 		let done = false;
@@ -235,10 +244,12 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
-			// Which provider is current? sub-core maps the active model to a provider
-			// name itself (handling e.g. openai-codex -> codex), so trust it rather
-			// than guessing from the raw model string.
-			const provider = await requestCurrentProvider(pi);
+			// Ask sub-core for the current provider + its live usage snapshot. This is
+			// the same source the status bar renders (sub-core maps the active model to
+			// a provider name itself, e.g. openai-codex -> codex) and, unlike the
+			// entries endpoint, it is not dropped by a ~60s cache TTL.
+			const state = await requestCurrentState(pi);
+			const provider = state?.provider;
 			if (!provider) {
 				ctx.ui.notify(
 					"/nw: couldn't determine the current provider from sub-core (is the sub extension loaded and this provider tracked?)",
@@ -247,17 +258,14 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
-			// Read that provider's windows from cache; on a cold-cache miss, do one
-			// forced fetch before giving up. Never guess a different provider.
-			const pickForProvider = (entries: ProviderUsageEntry[] | undefined) => {
-				const e = entries?.find((x) => x.provider === provider);
-				return { entry: e, win: pickNextResetWindow(e?.usage?.windows) };
-			};
-			let { entry, win } = pickForProvider(await requestEntries(pi));
+			// Prefer the live snapshot's windows; on a cold miss (no reset time yet),
+			// force one fetch for this provider before giving up.
+			let win = pickNextResetWindow(state.usage?.windows);
 			if (!win?.resetAt) {
-				({ entry, win } = pickForProvider(await requestEntries(pi, true)));
+				const entries = await requestEntries(pi, true);
+				win = pickNextResetWindow(entries?.find((e) => e.provider === provider)?.usage?.windows);
 			}
-			if (!entry || !win?.resetAt) {
+			if (!win?.resetAt) {
 				ctx.ui.notify(`/nw: no window with a known reset time found for ${provider} — cannot schedule`, "error");
 				return;
 			}
@@ -266,7 +274,7 @@ export default function (pi: ExtensionAPI) {
 			cancelPending(ctx, false);
 
 			const fireAt = Date.parse(win.resetAt) + SAFETY_MARGIN_MS;
-			const scheduledProvider = entry.provider;
+			const scheduledProvider = provider;
 
 			const ticker = setInterval(() => renderWidget(ctx), 30_000);
 			ticker.unref?.();

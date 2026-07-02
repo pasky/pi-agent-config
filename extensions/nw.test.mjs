@@ -39,7 +39,43 @@ const jitiDir = dirname(piRequire.resolve("jiti/package.json"));
 const { createJiti } = await import(`${jitiDir}/lib/jiti-static.mjs`);
 const jiti = createJiti(import.meta.url);
 
-const { pickNextResetWindow, scheduleAt, preview } = await jiti.import(resolve(HERE, "nw.ts"));
+const nw = await jiti.import(resolve(HERE, "nw.ts"));
+const { pickNextResetWindow, scheduleAt, preview } = nw;
+
+// Mock harness for the command handler (nw.ts has type-only pi imports).
+function loadCommand({ currentState, forcedEntries = [] }) {
+	const commands = {};
+	let forcedFetch = false;
+	const pi = {
+		registerCommand: (n, o) => (commands[n] = o),
+		on: () => {},
+		sendUserMessage: () => {},
+		events: {
+			on: () => {},
+			emit: (name, p) => {
+				if (name !== "sub-core:request") return;
+				if (p.type === "current") return p.reply({ state: currentState });
+				forcedFetch = !!p.force;
+				p.reply({ entries: p.force ? forcedEntries : [] });
+			},
+		},
+	};
+	nw.default(pi);
+	return { handler: commands.nw.handler, forced: () => forcedFetch };
+}
+function mockCtx() {
+	const widgets = {};
+	const notes = [];
+	return {
+		ctx: {
+			hasUI: true,
+			model: { provider: "anthropic" },
+			ui: { setWidget: (k, c) => (widgets[k] = c), notify: (m, t) => notes.push({ m, t }) },
+		},
+		widgets,
+		notes,
+	};
+}
 
 const MAX = 2 ** 31 - 1;
 let failures = 0;
@@ -128,6 +164,45 @@ await test("preview: collapses whitespace, keeps full text", () => {
 	assert.equal(preview("line one\n\n  line two   with   spaces"), "line one line two with spaces");
 	const long = "refactor the entire authentication subsystem and add tests everywhere please";
 	assert.equal(preview(long), long); // never truncates
+});
+
+// Regression: the current-state snapshot carries the 5h window even when the
+// entries endpoint returns empty (its ~60s TTL dropped the stale entry during a
+// long turn). /nw must still schedule off the live snapshot, not error out.
+await test("handler: schedules from live current-state when entries are TTL-dropped", async () => {
+	// Handler uses real Date.now(), so this must be a genuine future time.
+	const win = { label: "5h", usedPercent: 32, resetAt: new Date(Date.now() + 75 * 60e3).toISOString() };
+	const { handler, forced } = loadCommand({
+		currentState: { provider: "anthropic", usage: { provider: "anthropic", windows: [win] } },
+		forcedEntries: [],
+	});
+	const { ctx, notes } = mockCtx();
+	await handler("overnight job", ctx);
+	assert.equal(forced(), false); // never needed the forced fallback
+	const last = notes.at(-1);
+	assert.equal(last.t, "info");
+	assert.match(last.m, /scheduled — anthropic 5h/);
+	assert.match(last.m, /"overnight job"/);
+});
+
+await test("handler: cold-start falls back to one forced fetch", async () => {
+	const win = { label: "5h", usedPercent: 1, resetAt: new Date(Date.now() + 2e6).toISOString() };
+	const { handler, forced } = loadCommand({
+		currentState: { provider: "anthropic", usage: { provider: "anthropic", windows: [] } },
+		forcedEntries: [{ provider: "anthropic", usage: { provider: "anthropic", windows: [win] } }],
+	});
+	const { ctx, notes } = mockCtx();
+	await handler("job", ctx);
+	assert.equal(forced(), true);
+	assert.match(notes.at(-1).m, /scheduled/);
+});
+
+await test("handler: errors cleanly when sub-core has no current provider", async () => {
+	const { handler } = loadCommand({ currentState: undefined });
+	const { ctx, notes } = mockCtx();
+	await handler("job", ctx);
+	assert.equal(notes.at(-1).t, "error");
+	assert.match(notes.at(-1).m, /couldn't determine the current provider/);
 });
 
 if (failures) {
