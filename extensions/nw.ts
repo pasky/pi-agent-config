@@ -16,9 +16,11 @@
  *   /nw cancel       cancel the pending job
  *
  * Data source: the sub-core extension (@marckrenn/pi-sub-core) via its event
- * bus. We ask for a fresh snapshot of all providers' usage, pick the window that
- * resets soonest for the current provider (that's the short rolling window,
- * "5h" on Anthropic), and schedule off its `resetAt` timestamp.
+ * bus. We ask sub-core which provider is current (it maps the active model to a
+ * provider name itself, e.g. openai-codex -> codex) and read that provider's
+ * usage windows from sub-core's cache; on a cache miss we do one forced fetch.
+ * We then pick the window that resets soonest (the short rolling window, "5h"
+ * on Anthropic) and schedule off its `resetAt` timestamp.
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -27,7 +29,13 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 // and we never want to fire while the old window is technically still live.
 const SAFETY_MARGIN_MS = 5 * 60 * 1000;
 const WIDGET_KEY = "nw";
+// Cached reads reply synchronously; a forced fetch hits the network for the
+// provider, so give it a longer budget.
 const CORE_TIMEOUT_MS = 3000;
+const CORE_FORCE_TIMEOUT_MS = 15000;
+// setTimeout delays above 2^31-1 ms overflow and fire almost immediately, so
+// long waits (e.g. monthly windows) must be chunked below this.
+const MAX_TIMEOUT_MS = 2 ** 31 - 1;
 
 interface RateWindow {
 	label: string;
@@ -68,7 +76,11 @@ function requestCurrentProvider(pi: ExtensionAPI): Promise<string | undefined> {
 	});
 }
 
-function requestEntries(pi: ExtensionAPI): Promise<ProviderUsageEntry[] | undefined> {
+// Read usage entries from sub-core. Default is the cache (instant): `resetAt` is
+// slow-moving and sub-core refreshes it every ~60s, so cached data is fresh
+// enough and avoids a spurious timeout from a forced multi-provider fetch. Pass
+// force=true only as a cold-cache fallback (sub-core then fetches).
+function requestEntries(pi: ExtensionAPI, force = false): Promise<ProviderUsageEntry[] | undefined> {
 	return new Promise((resolve) => {
 		let done = false;
 		const timer = setTimeout(() => {
@@ -76,13 +88,10 @@ function requestEntries(pi: ExtensionAPI): Promise<ProviderUsageEntry[] | undefi
 				done = true;
 				resolve(undefined);
 			}
-		}, CORE_TIMEOUT_MS);
-		// Use cached data (no force): `resetAt` is a slow-moving timestamp and
-		// sub-core already refreshes it every ~60s, so the cache is fresh enough.
-		// A forced multi-provider network fetch could easily exceed our timeout
-		// and produce a spurious "could not read usage" error.
+		}, force ? CORE_FORCE_TIMEOUT_MS : CORE_TIMEOUT_MS);
 		pi.events.emit("sub-core:request", {
 			type: "entries",
+			force,
 			reply: (payload: { entries?: ProviderUsageEntry[] }) => {
 				if (done) return;
 				done = true;
@@ -91,6 +100,28 @@ function requestEntries(pi: ExtensionAPI): Promise<ProviderUsageEntry[] | undefi
 			},
 		});
 	});
+}
+
+/**
+ * Schedule `cb` to run at absolute time `fireAt` (epoch ms), safe for delays
+ * beyond setTimeout's ~24.8-day ceiling by re-arming in <=MAX_TIMEOUT_MS chunks.
+ * Returns a cancel function.
+ */
+export function scheduleAt(fireAt: number, cb: () => void, now = () => Date.now()): () => void {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const tick = () => {
+		const remaining = fireAt - now();
+		if (remaining <= 0) {
+			cb();
+			return;
+		}
+		timer = setTimeout(tick, Math.min(remaining, MAX_TIMEOUT_MS));
+		timer.unref?.();
+	};
+	tick();
+	return () => {
+		if (timer) clearTimeout(timer);
+	};
 }
 
 // --- window selection ------------------------------------------------------
@@ -146,10 +177,13 @@ export default function (pi: ExtensionAPI) {
 	interface Pending {
 		prompt: string;
 		fireAt: number;
-		timer: ReturnType<typeof setTimeout>;
+		cancelTimer: () => void;
 		ticker: ReturnType<typeof setInterval>;
-		provider?: string;
-		windowLabel?: string;
+		provider: string;
+		windowLabel: string;
+		// Raw model.provider string at schedule time, to detect a provider switch
+		// (compared against model_select events, which use the same raw strings).
+		modelProvider?: string;
 	}
 	let pending: Pending | undefined;
 
@@ -170,7 +204,7 @@ export default function (pi: ExtensionAPI) {
 
 	function cancelPending(ctx: ExtensionContext, notify = true): boolean {
 		if (!pending) return false;
-		clearTimeout(pending.timer);
+		pending.cancelTimer();
 		clearInterval(pending.ticker);
 		pending = undefined;
 		clearWidget(ctx);
@@ -201,22 +235,30 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
-			// Fetch fresh usage and figure out which window governs us.
-			const [provider, entries] = await Promise.all([
-				requestCurrentProvider(pi),
-				requestEntries(pi),
-			]);
-			if (!entries?.length) {
-				ctx.ui.notify("/nw: could not read usage from sub-core (is the sub extension loaded?)", "error");
+			// Which provider is current? sub-core maps the active model to a provider
+			// name itself (handling e.g. openai-codex -> codex), so trust it rather
+			// than guessing from the raw model string.
+			const provider = await requestCurrentProvider(pi);
+			if (!provider) {
+				ctx.ui.notify(
+					"/nw: couldn't determine the current provider from sub-core (is the sub extension loaded and this provider tracked?)",
+					"error",
+				);
 				return;
 			}
-			const targetProvider = provider ?? ctx.model?.provider;
-			const entry =
-				entries.find((e) => e.provider === targetProvider) ??
-				entries.find((e) => pickNextResetWindow(e.usage?.windows));
-			const win = pickNextResetWindow(entry?.usage?.windows);
+
+			// Read that provider's windows from cache; on a cold-cache miss, do one
+			// forced fetch before giving up. Never guess a different provider.
+			const pickForProvider = (entries: ProviderUsageEntry[] | undefined) => {
+				const e = entries?.find((x) => x.provider === provider);
+				return { entry: e, win: pickNextResetWindow(e?.usage?.windows) };
+			};
+			let { entry, win } = pickForProvider(await requestEntries(pi));
+			if (!win?.resetAt) {
+				({ entry, win } = pickForProvider(await requestEntries(pi, true)));
+			}
 			if (!entry || !win?.resetAt) {
-				ctx.ui.notify("/nw: no window with a known reset time found — cannot schedule", "error");
+				ctx.ui.notify(`/nw: no window with a known reset time found for ${provider} — cannot schedule`, "error");
 				return;
 			}
 
@@ -224,59 +266,68 @@ export default function (pi: ExtensionAPI) {
 			cancelPending(ctx, false);
 
 			const fireAt = Date.parse(win.resetAt) + SAFETY_MARGIN_MS;
-			const delay = Math.max(0, fireAt - Date.now());
+			const scheduledProvider = entry.provider;
 
-			const fire = () => {
-				const p = pending;
-				pending = undefined;
-				clearWidget(ctx);
-				if (!p) return;
-				if (ctx.hasUI) ctx.ui.notify(`/nw: window reset — submitting deferred prompt`, "info");
-				// Always triggers a turn; queue as follow-up if a turn is somehow live.
-				pi.sendUserMessage(p.prompt, { deliverAs: "followUp" });
-			};
-
-			const timer = setTimeout(fire, delay);
-			timer.unref?.();
 			const ticker = setInterval(() => renderWidget(ctx), 30_000);
 			ticker.unref?.();
-
-			pending = {
+			// Build the job first so fire() can key off its identity: only fire when
+			// this exact job is still the current `pending` (never after it was
+			// cancelled/replaced, and never when nothing is pending).
+			const job: Pending = {
 				prompt: text,
 				fireAt,
-				timer,
+				cancelTimer: () => {},
 				ticker,
-				provider: entry.provider,
+				provider: scheduledProvider,
 				windowLabel: win.label,
+				modelProvider: ctx.model?.provider,
 			};
+			job.cancelTimer = scheduleAt(fireAt, () => {
+				if (pending !== job) return; // cancelled/replaced — do nothing
+				clearInterval(job.ticker);
+				pending = undefined;
+				clearWidget(ctx);
+				if (ctx.hasUI) ctx.ui.notify(`/nw: ${scheduledProvider} window reset — submitting deferred prompt`, "info");
+				// Always triggers a turn; queue as follow-up if a turn is somehow live.
+				pi.sendUserMessage(job.prompt, { deliverAs: "followUp" });
+			});
+			pending = job;
 			renderWidget(ctx);
 			ctx.ui.notify(
-				`/nw: scheduled — ${entry.provider} ${win.label} resets in ${formatDuration(Date.parse(win.resetAt) - Date.now())}; will resume at ${formatClock(fireAt)} (+5m margin).`,
+				`/nw: scheduled — ${scheduledProvider} ${win.label} resets in ${formatDuration(Date.parse(win.resetAt) - Date.now())}; will resume at ${formatClock(fireAt)} (+5m margin) — "${preview(job.prompt)}". /nw cancel to abort.`,
 				"info",
 			);
 		},
 	});
 
-	// A pending job binds the session it was scheduled in (its widget, notify,
-	// and the eventual sendUserMessage all target that session). If the user
-	// switches/forks/reloads the session — possibly hours later — that binding
-	// goes stale and the prompt would fire into the wrong session. Cancel on any
-	// such transition rather than misfire. (session_before_switch fires while the
-	// old ctx is still valid so we can cleanly clear the widget; session_start
-	// covers forks/reloads that land in a fresh session.)
-	const cancelOnSessionChange = (_event: unknown, ctx: ExtensionContext) => {
-		if (pending) {
-			const prompt = pending.prompt;
-			cancelPending(ctx, false);
-			if (ctx.hasUI) ctx.ui.notify(`/nw: cancelled deferred prompt (session changed) — "${preview(prompt)}"`, "warning");
-		}
+	// A pending job binds the session (widget/notify/sendUserMessage all target
+	// the session that was current at schedule time) and a specific provider's
+	// window. If that binding goes stale — the user switches/forks the session,
+	// or switches to a different provider — firing would target the wrong session
+	// or a window we never waited for. Cancel rather than misfire.
+	const cancelForReason = (ctx: ExtensionContext, reason: string) => {
+		if (!pending) return;
+		const prompt = pending.prompt;
+		cancelPending(ctx, false);
+		if (ctx.hasUI) ctx.ui.notify(`/nw: cancelled deferred prompt (${reason}) — "${preview(prompt)}"`, "warning");
 	};
-	pi.on("session_before_switch", cancelOnSessionChange);
-	pi.on("session_start", cancelOnSessionChange);
+	// session_before_switch/before_fork fire while the old ctx is still valid, so
+	// we can cleanly clear the widget before the session changes.
+	pi.on("session_before_switch", (_e, ctx) => cancelForReason(ctx, "session switched"));
+	pi.on("session_before_fork", (_e, ctx) => cancelForReason(ctx, "session forked"));
+	// Provider switch mid-wait: the window we're waiting on no longer matches the
+	// active provider. Compare raw model.provider strings (same on both sides).
+	pi.on("model_select", (event, ctx) => {
+		if (!pending) return;
+		const newProvider = (event as { model?: { provider?: string } }).model?.provider;
+		if (newProvider && newProvider !== pending.modelProvider) {
+			cancelForReason(ctx, `switched to ${newProvider}`);
+		}
+	});
 
 	pi.on("session_shutdown", () => {
 		if (pending) {
-			clearTimeout(pending.timer);
+			pending.cancelTimer();
 			clearInterval(pending.ticker);
 			pending = undefined;
 		}
