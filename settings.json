@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "0.80.2",
+  "lastChangelogVersion": "0.80.3",
   "defaultProjectTrust": "always",
   "defaultProvider": "anthropic",
   "defaultModel": "claude-opus-4-8",
@@ -9,7 +9,8 @@
     "anthropic/claude-sonnet-4-6",
     "anthropic/claude-haiku-4-5",
     "openai-codex/gpt-5.5",
-    "openrouter/z-ai/glm-5.2"
+    "openrouter/z-ai/glm-5.2",
+    "anthropic/claude-fable-5"
   ],
   "hideThinkingBlock": false,
   "packages": [
@@ -23,6 +24,7 @@
   ],
   "extensions": [
     "extensions/tps.ts",
-    "extensions/review.ts"
+    "extensions/review.ts",
+    "extensions/nw.ts"
   ]
 }
