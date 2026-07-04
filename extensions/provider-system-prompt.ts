@@ -35,6 +35,13 @@ function splitSystemPrompt(prompt: string): { head: string; tail: string } {
 	};
 }
 
+// Detect the pi package root from the default prompt head, which always
+// contains "Main documentation: <root>/README.md". Used to expand @PIROOT@
+// placeholders so prompt files stay portable across machines/installs.
+function detectPiRoot(prompt: string): string | undefined {
+	return prompt.match(/Main documentation: (.+)\/README\.md/)?.[1];
+}
+
 function getPromptPath(provider: string): string {
 	return join(PROMPT_DIR, `${provider}.md`);
 }
@@ -68,7 +75,9 @@ export default function providerSystemPrompt(pi: ExtensionAPI) {
 				return;
 			}
 
-			const { head } = splitSystemPrompt(ctx.getSystemPrompt());
+			let { head } = splitSystemPrompt(ctx.getSystemPrompt());
+			const piRoot = detectPiRoot(head);
+			if (piRoot) head = head.replaceAll(piRoot, "@PIROOT@");
 			mkdirSync(PROMPT_DIR, { recursive: true });
 			writeFileSync(path, `${head.trimEnd()}\n`, "utf8");
 
@@ -92,7 +101,16 @@ export default function providerSystemPrompt(pi: ExtensionAPI) {
 		const path = getPromptPath(provider);
 		if (!existsSync(path)) return;
 
-		const customHead = readFileSync(path, "utf8").trimEnd();
+		let customHead = readFileSync(path, "utf8").trimEnd();
+		const piRoot = detectPiRoot(event.systemPrompt);
+		if (piRoot) {
+			customHead = customHead.replaceAll("@PIROOT@", piRoot);
+		} else if (customHead.includes("@PIROOT@")) {
+			ctx.ui.notify(
+				`provider-system-prompt: cannot resolve @PIROOT@ in ${provider}.md (marker missing from default prompt)`,
+				"warning",
+			);
+		}
 		const { tail } = splitSystemPrompt(event.systemPrompt);
 		return {
 			systemPrompt: `${customHead}${tail}`,
