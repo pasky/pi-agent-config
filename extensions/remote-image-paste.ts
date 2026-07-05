@@ -6,14 +6,17 @@
  * 127.0.0.1:7779 (launchd inetd-style + pngpaste) and reverse-tunnels it to a
  * per-box unix socket here:
  *   ssh -R /home/USER/.pi-clip/<box>.sock:localhost:7779   (+ SetEnv LC_PI_CLIP=<box>)
- *   et  -r ~/.pi-clip/<box>.sock:7779
+ *   et  -r PI_CLIP_SOCK:/CLIENT/HOME/.clipserve.sock   (unix socket on client;
+ *       et creates a private per-connection socket here and exports PI_CLIP_SOCK)
  * A login hook symlinks ~/.pi-clip/by-tty/<tty>.sock -> <box>.sock so we can
  * resolve "which box is the user typing from" via tmux client activity.
  *
  * Socket resolution order (first *connectable* wins; dead sockets skipped):
  *   1. by-tty socket of the most-recently-active tmux client (the one that
  *      pressed Ctrl+V)
- *   2. all ~/.pi-clip/*.sock, newest first
+ *   2. all ~/.pi-clip/*.sock and ~/.pi-clip/by-tty/*.sock, newest first
+ *      (et per-connection sockets live under /tmp/et_forward_sock_XXXXXX/
+ *      and are only reachable via their by-tty symlink)
  *   3. legacy single socket ~/.pi-clip.sock, then TCP 127.0.0.1:7779
  *
  * See remote-image-paste.mac-setup.md next to this file for client setup.
@@ -85,25 +88,24 @@ function candidateTargets(): Target[] {
 	const candidates: Target[] = [];
 	const byTty = activeTmuxClientSocket();
 	if (byTty) candidates.push(byTty);
-	try {
-		const perBox = fs
-			.readdirSync(CLIP_DIR)
-			.filter((f) => f.endsWith(".sock"))
-			.map((f) => path.join(CLIP_DIR, f))
-			.map((p) => {
+	const scanned: { p: string; mtime: number }[] = [];
+	for (const dir of [CLIP_DIR, path.join(CLIP_DIR, "by-tty")]) {
+		try {
+			for (const f of fs.readdirSync(dir)) {
+				if (!f.endsWith(".sock")) continue;
+				const p = path.join(dir, f);
 				try {
-					return { p, mtime: fs.statSync(p).mtimeMs };
+					scanned.push({ p, mtime: fs.statSync(p).mtimeMs }); // follows symlinks; dangling ones throw
 				} catch {
-					return null;
+					// dangling by-tty symlink or vanished socket: skip
 				}
-			})
-			.filter((e): e is { p: string; mtime: number } => e !== null)
-			.sort((a, b) => b.mtime - a.mtime)
-			.map((e) => e.p);
-		candidates.push(...perBox);
-	} catch {
-		// no ~/.pi-clip dir — fine
+			}
+		} catch {
+			// dir doesn't exist: fine
+		}
 	}
+	scanned.sort((a, b) => b.mtime - a.mtime);
+	candidates.push(...scanned.map((e) => e.p));
 	if (fs.existsSync(LEGACY_SOCK)) candidates.push(LEGACY_SOCK);
 	candidates.push(TCP_PORT);
 	return [...new Set(candidates)];

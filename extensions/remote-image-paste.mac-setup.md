@@ -32,10 +32,16 @@ no daemon running when idle):
 	<key>StandardErrorPath</key><string>/tmp/pngpaste-clipserve.err</string>
 	<key>Sockets</key>
 	<dict>
-		<key>Listener</key>
+		<!-- TCP listener: used by ssh RemoteForward -->
+		<key>ListenerTCP</key>
 		<dict>
 			<key>SockNodeName</key><string>127.0.0.1</string>
 			<key>SockServiceName</key><string>7779</string>
+		</dict>
+		<!-- Unix socket listener: used by et's env-var reverse tunnel -->
+		<key>ListenerUnix</key>
+		<dict>
+			<key>SockPathName</key><string>/Users/pasky/.clipserve.sock</string>
 		</dict>
 	</dict>
 </dict>
@@ -65,19 +71,25 @@ Host thatbox
 needed. The remote `~/.bashrc` hook symlinks the login tty to the box's
 socket so the extension can resolve tmux-client -> box.)
 
-With et, ssh config RemoteForward is not honored — pass the tunnel explicitly.
-The socket path must be the ABSOLUTE remote path: et's parser only recognizes
-socket paths starting with `/` (a literal `~` trips its port-range detection
-on the dash in `.pi-clip`, and shell-expanded `~` would wrongly point at the
-*client's* home):
+With et (released 6.2.x), remote unix socket paths in tunnels are NOT
+supported (`-r /path.sock:7779` fails with a bogus "port range" error; the
+socket-path syntax only exists in unreleased master). Use the env-var
+named-pipe form instead — TESTED WORKING on 6.2.11:
 
 ```bash
-et -k1 -r /home/pasky/.pi-clip/mbp.sock:7779 thatbox
+et -k1 -r PI_CLIP_SOCK:/Users/pasky/.clipserve.sock thatbox
 ```
 
+et creates a private per-connection socket on the remote
+(`/tmp/et_forward_sock_XXXXXX/sock`, mode 0700), exports its path as
+`$PI_CLIP_SOCK` in the session, and connects it to the client-side UNIX
+socket named after the colon (the launchd ListenerUnix above; absolute
+client-side path, no `~`). The remote `~/.bashrc` hook symlinks the login
+tty to `$PI_CLIP_SOCK`, so et needs no LC_PI_CLIP/box name at all.
+
 Note: if aliased unconditionally, the tunnel is requested on every et
-connection — hosts that can't create that path may refuse the session.
-Scope the alias per-host if you et elsewhere too.
+connection; hosts where it can't be set up may complain. Scope the alias
+per-host if you et elsewhere too.
 
 (et's ssh bootstrap still applies SetEnv from ssh config.)
 
