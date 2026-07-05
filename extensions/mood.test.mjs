@@ -101,6 +101,16 @@ test("styleMoods: non-live keeps a real '<' in content as-is", () => {
 	assert.equal(styleMoods("if a < b then"), "if a < b then");
 });
 
+test("styleMoods: a standalone/last mood paragraph attaches to the preceding one", () => {
+	assert.equal(styleMoods("First para.\n\n<mood>🎉</mood>"), "First para. *[🎉]*");
+	assert.equal(styleMoods("A\n\n<mood>🤔</mood>\n\nB"), "A *[🤔]*\n\nB");
+});
+
+test("styleMoods: a leading mood paragraph attaches to the following one", () => {
+	assert.equal(styleMoods("<mood>🙂</mood>\n\nHere we go."), "*[🙂]* Here we go.");
+	assert.equal(styleMoods("\n<mood>🙂</mood>\n\nGo."), "*[🙂]* Go.");
+});
+
 test("styleMoods: preserves code indentation and returns unchanged text as-is", () => {
 	const code = "Here:\n\n```py\ndef f():\n    return 1\n```";
 	assert.equal(styleMoods(code), code);

@@ -32,6 +32,10 @@ const STATUS_KEY = "mood";
 // tags in one string are matched individually. [\s\S] tolerates newlines.
 const MOOD_TAG = /<mood>([\s\S]*?)<\/mood>/g;
 
+// Like MOOD_TAG but also captures the whitespace immediately before/after the
+// tag, so styleMoods can pull a paragraph-separated mood onto a neighbour.
+const MOOD_TAG_WS = /(\s*)<mood>([\s\S]*?)<\/mood>(\s*)/g;
+
 // A trailing, not-yet-closed mood tag while streaming: either an opened
 // <mood>… with no </mood> yet, or a partial "<", "<m", … "<mood" at the very end.
 const TRAILING_OPEN = /<mood>[\s\S]*$/;
@@ -74,13 +78,29 @@ export function latestMoodOf(text: string): string | undefined {
 
 /**
  * Replace complete <mood>X</mood> tags with a styled inline marker (see
- * wrapMood). When `live` is true (during streaming), also hide a trailing
- * not-yet-closed tag so the raw `<mood>` never flashes; that fragment reappears
- * — styled — once the closing tag streams in. Text without mood tags is
- * returned unchanged, so code/indentation is untouched.
+ * wrapMood).
+ *
+ * A mood that sits alone in its own paragraph (blank lines or newlines around
+ * it) is pulled onto a neighbouring paragraph with a single space rather than
+ * left floating in its own block: it's appended to the *preceding* paragraph
+ * when there is one (the leading break collapses to a space, the trailing break
+ * is kept), otherwise glued to the front of the *following* paragraph (the
+ * trailing break collapses to a space). Inline tags keep their single spaces.
+ *
+ * When `live` is true (during streaming), also hide a trailing not-yet-closed
+ * tag so the raw `<mood>` never flashes; that fragment reappears — styled —
+ * once the closing tag streams in. Text without mood tags is returned
+ * unchanged, so code/indentation is untouched.
  */
 export function styleMoods(text: string, live = false): string {
-	let out = text.replace(MOOD_TAG, (_m, emoji: string) => wrapMood(emoji.trim()));
+	let out = text.replace(MOOD_TAG_WS, (match, before: string, emoji: string, after: string, offset: number, full: string) => {
+		const styled = wrapMood(emoji.trim());
+		if (!styled) return before + after; // empty tag: drop it, preserve spacing
+		const hasPreceding = offset > 0;
+		const hasFollowing = offset + match.length < full.length;
+		if (hasPreceding) return ` ${styled}${after}`;
+		return hasFollowing ? `${styled} ` : styled;
+	});
 	if (live) {
 		out = out.replace(TRAILING_OPEN, "").replace(TRAILING_PARTIAL, "");
 	}
