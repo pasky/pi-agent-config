@@ -22,3 +22,7 @@
 	path = packages/pi-omplike-advisor
 	url = git@github.com:pasky/pi-omplike-advisor.git
 	branch = main
+[submodule "packages/pi-ssh-image-clipboard"]
+	path = packages/pi-ssh-image-clipboard
+	url = git@github.com:pasky/pi-ssh-image-clipboard.git
+	branch = main

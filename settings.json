@@ -2,7 +2,7 @@
   "lastChangelogVersion": "0.80.3",
   "defaultProjectTrust": "always",
   "defaultProvider": "anthropic",
-  "defaultModel": "claude-fable-5",
+  "defaultModel": "claude-opus-4-8",
   "defaultThinkingLevel": "high",
   "enabledModels": [
     "anthropic/claude-opus-4-8",
@@ -20,12 +20,14 @@
     "packages/pi-side-agents",
     "packages/pi-session-summary",
     "packages/chrome-cdp-skill",
-    "packages/pi-omplike-advisor"
+    "packages/pi-omplike-advisor",
+    "packages/pi-ssh-image-clipboard"
   ],
   "extensions": [
     "extensions/tps.ts",
     "extensions/review.ts",
     "extensions/nw.ts",
     "extensions/mood.ts"
-  ]
+  ],
+  "theme": "dark"
 }
