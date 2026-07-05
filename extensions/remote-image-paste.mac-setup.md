@@ -1,6 +1,11 @@
-# Mac-side setup for remote-image-paste.ts
+# Client-side setup for remote-image-paste.ts
 
-One-time, on the Mac:
+Per client box (Mac instructions; any OS works if it serves clipboard PNG
+on 127.0.0.1:7779). Supports multiple boxen attached to the same tmux: each
+box gets its own socket `~/.pi-clip/<box>.sock` on the remote, and the
+extension picks the socket of the tmux client that pressed Ctrl+V.
+
+## 1. Clipboard server (Mac)
 
 ```bash
 brew install pngpaste
@@ -39,37 +44,63 @@ no daemon running when idle):
 
 (Intel Mac: pngpaste lives at `/usr/local/bin/pngpaste` instead.)
 
-Activate and test locally (take a screenshot to clipboard first, cmd-ctrl-shift-4):
+Activate and test locally (screenshot to clipboard first, cmd-ctrl-shift-4):
 
 ```bash
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/org.pasky.clipserve.plist
 nc 127.0.0.1 7779 | file -        # expect: PNG image data ...
 ```
 
-## Connecting
+## 2. Tunnel + box identity
 
-Add the reverse tunnel to your usual connection:
+Pick a short name for the box (e.g. `mbp`). In the box's `~/.ssh/config`:
 
-```bash
-et -k1 -r 7779:7779 user@host
-# or ssh; in ~/.ssh/config on the mac:
-#   Host thatbox
-#     RemoteForward 7779 localhost:7779
+```
+Host thatbox
+	RemoteForward /home/pasky/.pi-clip/mbp.sock localhost:7779
+	SetEnv LC_PI_CLIP=mbp
 ```
 
-Then Ctrl+V in remote pi pastes the Mac clipboard image. Test end-to-end on
-the remote box with: `nc -w2 localhost 7779 | file -`
+(`LC_*` chosen because Debian sshd accepts it by default — no server config
+needed. The remote `~/.bashrc` hook symlinks the login tty to the box's
+socket so the extension can resolve tmux-client -> box.)
 
-Notes:
+With et, ssh config RemoteForward is not honored — pass the tunnel explicitly:
 
-- Multiple simultaneous connections: only the first gets the remote port
-  (ssh prints a warning for the rest). Harmless.
-- Multi-user remote box hardening: tunnel to a unix socket instead —
-  `ssh -R /home/USER/.pi-clip.sock:localhost:7779` (the pi extension prefers
-  `~/.pi-clip.sock` when it exists; sshd needs `StreamLocalBindUnlink yes`
-  to handle stale sockets). With et, `-r` also accepts socket paths.
-- The extension reads `PI_REMOTE_CLIP_PORT` / `PI_REMOTE_CLIP_SOCK` env vars
-  to override defaults.
+```bash
+et -k1 -r ~/.pi-clip/mbp.sock:7779 thatbox
+```
+
+(et's ssh bootstrap still applies SetEnv from ssh config.)
+
+## 3. Remote server one-timers (mostly done already)
+
+- `mkdir -p ~/.pi-clip/by-tty && chmod 700 ~/.pi-clip` — done.
+- tty->box mapping hook in `~/.bashrc` — done.
+- Recommended (needs root): let sshd replace stale socket files after unclean
+  disconnects, otherwise the re-established forward fails until the stale
+  `.sock` file is removed manually:
+
+  ```bash
+  echo 'StreamLocalBindUnlink yes' | sudo tee /etc/ssh/sshd_config.d/60-pi-clip.conf
+  sudo sshd -t && sudo systemctl reload ssh
+  ```
+
+## How Ctrl+V picks a box
+
+1. tmux client with the newest `client_activity` (= the one that typed) ->
+   `~/.pi-clip/by-tty/<tty>.sock` symlink -> that box's socket.
+2. Fallback: every `~/.pi-clip/*.sock`, newest first.
+3. Legacy: `~/.pi-clip.sock`, then TCP 127.0.0.1:7779.
+
+Dead/stale sockets are probed (300 ms) and skipped. If a live socket is
+found but the box's clipboard has no image, pi shows a warning and does NOT
+fall through to another box's clipboard.
+
+Test end-to-end from the remote box: `nc -w2 -U ~/.pi-clip/mbp.sock | file -`
+
+## Notes
+
 - Empty clipboard: `pngpaste` exits non-zero with an error on stderr. In inetd
   mode launchd would connect stderr to the socket too; the `StandardErrorPath`
   key in the plist redirects it to `/tmp/pngpaste-clipserve.err` so the
@@ -78,3 +109,5 @@ Notes:
   either way.
 - Non-PNG images on the clipboard (e.g. JPEG copied from a browser) are fine:
   pngpaste converts to PNG on the way out.
+- Env overrides read by the extension: `PI_REMOTE_CLIP_DIR`,
+  `PI_REMOTE_CLIP_SOCK` (legacy single socket), `PI_REMOTE_CLIP_PORT`.

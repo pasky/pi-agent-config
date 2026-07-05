@@ -1,18 +1,28 @@
 /**
- * remote-image-paste: make Ctrl+V image paste work over ssh/et from a Mac client.
+ * remote-image-paste: make Ctrl+V image paste work over ssh/et from client
+ * machines (e.g. Macs), including multiple boxen attached to the same tmux.
  *
- * Transport: the Mac serves its clipboard as PNG on 127.0.0.1:7779 (launchd
- * inetd-style + pngpaste), reverse-tunneled to this box via:
- *   et -k1 -r 7779:7779 host        (or: ssh -R 7779:localhost:7779 host)
- * Optionally as a unix socket (preferred if present, safer on multi-user boxes):
- *   ssh -R ~/.pi-clip.sock:localhost:7779 host
+ * Transport: each client box serves its clipboard as PNG on its local
+ * 127.0.0.1:7779 (launchd inetd-style + pngpaste) and reverse-tunnels it to a
+ * per-box unix socket here:
+ *   ssh -R /home/USER/.pi-clip/<box>.sock:localhost:7779   (+ SetEnv LC_PI_CLIP=<box>)
+ *   et  -r ~/.pi-clip/<box>.sock:7779
+ * A login hook symlinks ~/.pi-clip/by-tty/<tty>.sock -> <box>.sock so we can
+ * resolve "which box is the user typing from" via tmux client activity.
  *
- * See remote-image-paste.mac-setup.md next to this file for the Mac side.
+ * Socket resolution order (first *connectable* wins; dead sockets skipped):
+ *   1. by-tty socket of the most-recently-active tmux client (the one that
+ *      pressed Ctrl+V)
+ *   2. all ~/.pi-clip/*.sock, newest first
+ *   3. legacy single socket ~/.pi-clip.sock, then TCP 127.0.0.1:7779
+ *
+ * See remote-image-paste.mac-setup.md next to this file for client setup.
  *
  * Registers only on headless Linux (no DISPLAY/WAYLAND_DISPLAY), where pi's
  * built-in image paste is a guaranteed no-op anyway — so local/desktop pi
  * sessions keep the stock handler.
  */
+import { execFileSync } from "node:child_process";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as net from "node:net";
@@ -20,19 +30,20 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-const UNIX_SOCK = process.env.PI_REMOTE_CLIP_SOCK ?? path.join(os.homedir(), ".pi-clip.sock");
+const CLIP_DIR = process.env.PI_REMOTE_CLIP_DIR ?? path.join(os.homedir(), ".pi-clip");
+const LEGACY_SOCK = process.env.PI_REMOTE_CLIP_SOCK ?? path.join(os.homedir(), ".pi-clip.sock");
 const TCP_PORT = Number(process.env.PI_REMOTE_CLIP_PORT ?? 7779);
 const CONNECT_TIMEOUT_MS = 300; // localhost: either the tunnel is there or it isn't
 const INACTIVITY_TIMEOUT_MS = 2000; // while streaming image bytes over the WAN
 
-/** null = tunnel absent/unreachable; empty buffer = connected but nothing served */
-function fetchClipboard(): Promise<Buffer | null> {
+type Target = string | number; // unix socket path | localhost TCP port
+
+/** null = target dead/unreachable; empty buffer = connected but nothing served */
+function fetchFrom(target: Target): Promise<Buffer | null> {
 	return new Promise((resolve) => {
 		const chunks: Buffer[] = [];
 		let connected = false;
-		const sock = fs.existsSync(UNIX_SOCK)
-			? net.connect(UNIX_SOCK)
-			: net.connect(TCP_PORT, "127.0.0.1");
+		const sock = typeof target === "number" ? net.connect(target, "127.0.0.1") : net.connect(target);
 		const finish = (value: Buffer | null) => {
 			sock.destroy();
 			resolve(value);
@@ -47,6 +58,55 @@ function fetchClipboard(): Promise<Buffer | null> {
 		sock.on("data", (chunk) => chunks.push(chunk));
 		sock.on("close", () => finish(connected ? Buffer.concat(chunks) : null));
 	});
+}
+
+/** Socket of the tmux client that most recently sent input (i.e. this Ctrl+V). */
+function activeTmuxClientSocket(): string | null {
+	if (!process.env.TMUX) return null;
+	try {
+		const out = execFileSync("tmux", ["list-clients", "-F", "#{client_activity} #{client_tty}"], {
+			timeout: 1000,
+		}).toString("utf-8");
+		const best = out
+			.trim()
+			.split("\n")
+			.map((line) => line.trim().split(/\s+/))
+			.filter((parts) => parts.length === 2)
+			.sort((a, b) => Number(b[0]) - Number(a[0]))[0];
+		if (!best) return null;
+		const sock = path.join(CLIP_DIR, "by-tty", `${path.basename(best[1])}.sock`);
+		return fs.existsSync(sock) ? sock : null; // existsSync follows symlinks
+	} catch {
+		return null;
+	}
+}
+
+function candidateTargets(): Target[] {
+	const candidates: Target[] = [];
+	const byTty = activeTmuxClientSocket();
+	if (byTty) candidates.push(byTty);
+	try {
+		const perBox = fs
+			.readdirSync(CLIP_DIR)
+			.filter((f) => f.endsWith(".sock"))
+			.map((f) => path.join(CLIP_DIR, f))
+			.map((p) => {
+				try {
+					return { p, mtime: fs.statSync(p).mtimeMs };
+				} catch {
+					return null;
+				}
+			})
+			.filter((e): e is { p: string; mtime: number } => e !== null)
+			.sort((a, b) => b.mtime - a.mtime)
+			.map((e) => e.p);
+		candidates.push(...perBox);
+	} catch {
+		// no ~/.pi-clip dir — fine
+	}
+	if (fs.existsSync(LEGACY_SOCK)) candidates.push(LEGACY_SOCK);
+	candidates.push(TCP_PORT);
+	return [...new Set(candidates)];
 }
 
 function sniffImageExt(data: Buffer): string | null {
@@ -65,22 +125,25 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	pi.registerShortcut("ctrl+v", {
-		description: "Paste image from client-side (Mac) clipboard via reverse tunnel",
+		description: "Paste image from client-side clipboard via reverse tunnel",
 		handler: async (ctx) => {
-			const data = await fetchClipboard();
-			if (data === null) {
-				// No tunnel (e.g. connected via mosh): silent, like the stock
-				// handler on a headless box.
+			for (const target of candidateTargets()) {
+				const data = await fetchFrom(target);
+				if (data === null) continue; // dead tunnel/stale socket: try next
+				// Connected — this box's clipboard is authoritative; don't fall
+				// through to another box just because this one has no image.
+				const ext = data.length > 0 ? sniffImageExt(data) : null;
+				if (!ext) {
+					ctx.ui.notify("No image on client clipboard (tunnel is up)", "warning");
+					return;
+				}
+				const file = path.join(os.tmpdir(), `pi-clipboard-${crypto.randomUUID()}.${ext}`);
+				fs.writeFileSync(file, data);
+				ctx.ui.pasteToEditor(file);
 				return;
 			}
-			const ext = data.length > 0 ? sniffImageExt(data) : null;
-			if (!ext) {
-				ctx.ui.notify("No image on client clipboard (tunnel is up)", "warning");
-				return;
-			}
-			const file = path.join(os.tmpdir(), `pi-clipboard-${crypto.randomUUID()}.${ext}`);
-			fs.writeFileSync(file, data);
-			ctx.ui.pasteToEditor(file);
+			// No live tunnel at all (e.g. connected via mosh): silent, like the
+			// stock handler on a headless box.
 		},
 	});
 }
