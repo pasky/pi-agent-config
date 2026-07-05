@@ -2,7 +2,7 @@
   "lastChangelogVersion": "0.80.3",
   "defaultProjectTrust": "always",
   "defaultProvider": "anthropic",
-  "defaultModel": "claude-opus-4-8",
+  "defaultModel": "claude-fable-5",
   "defaultThinkingLevel": "high",
   "enabledModels": [
     "anthropic/claude-opus-4-8",
@@ -25,6 +25,7 @@
   "extensions": [
     "extensions/tps.ts",
     "extensions/review.ts",
-    "extensions/nw.ts"
+    "extensions/nw.ts",
+    "extensions/mood.ts"
   ]
 }
