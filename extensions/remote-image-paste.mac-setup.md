@@ -65,11 +65,19 @@ Host thatbox
 needed. The remote `~/.bashrc` hook symlinks the login tty to the box's
 socket so the extension can resolve tmux-client -> box.)
 
-With et, ssh config RemoteForward is not honored — pass the tunnel explicitly:
+With et, ssh config RemoteForward is not honored — pass the tunnel explicitly.
+The socket path must be the ABSOLUTE remote path: et's parser only recognizes
+socket paths starting with `/` (a literal `~` trips its port-range detection
+on the dash in `.pi-clip`, and shell-expanded `~` would wrongly point at the
+*client's* home):
 
 ```bash
-et -k1 -r ~/.pi-clip/mbp.sock:7779 thatbox
+et -k1 -r /home/pasky/.pi-clip/mbp.sock:7779 thatbox
 ```
+
+Note: if aliased unconditionally, the tunnel is requested on every et
+connection — hosts that can't create that path may refuse the session.
+Scope the alias per-host if you et elsewhere too.
 
 (et's ssh bootstrap still applies SetEnv from ssh config.)
 
