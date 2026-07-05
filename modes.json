@@ -2,11 +2,6 @@
   "version": 1,
   "currentMode": "smart",
   "modes": {
-    "rush": {
-      "provider": "openai-codex",
-      "modelId": "gpt-5.5",
-      "thinkingLevel": "low"
-    },
     "smart": {
       "provider": "anthropic",
       "modelId": "claude-opus-4-8",
