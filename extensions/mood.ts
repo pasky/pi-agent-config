@@ -1,6 +1,6 @@
 /**
- * mood — surface the model's internal functional emotional state as an emoji
- * in the footer/status bar.
+ * mood — surface the model's internal functional emotional state as an emoji,
+ * both in the footer/status bar and inline in the transcript.
  *
  * Inspired by @deepfates: "show the user the model's internal functional
  * emotions by putting an emoji in a UI element."
@@ -10,13 +10,16 @@
  *      `systemPrompt`, NOT by mutating the event) asking the model to emit
  *      <mood>X</mood> tags frequently — at the start, on every felt-state
  *      shift, and at the end of each reply.
- *   2. message_update reads the latest <mood> tag from the streaming reply and
- *      pushes that emoji to the footer via ctx.ui.setStatus, so the indicator
- *      evolves live as the turn unfolds.
- *   3. message_end strips the tags out of the finalized message so they don't
- *      pollute the visible transcript or the saved session.
+ *   2. message_update reads the latest <mood> from the streaming reply, pushes
+ *      that emoji to the footer, and rewrites the *display copy* of the message
+ *      so the raw tags never flash: complete <mood>X</mood> become a styled
+ *      inline marker, and a half-streamed trailing tag is hidden until it
+ *      closes. Per agent-loop.js, the message_update event carries a shallow
+ *      copy whose content we may swap without touching canonical/LLM state.
+ *   3. message_end returns a finalized replacement with the same styling, so
+ *      the saved transcript shows the styled marker (not raw tags).
  *
- * The pure helpers (extractMoods / latestMoodOf / stripMoods) are exported for
+ * The pure helpers (extractMoods / latestMoodOf / styleMoods) are exported for
  * the headless test in mood.test.mjs.
  */
 
@@ -29,15 +32,29 @@ const STATUS_KEY = "mood";
 // tags in one string are matched individually. [\s\S] tolerates newlines.
 const MOOD_TAG = /<mood>([\s\S]*?)<\/mood>/g;
 
+// A trailing, not-yet-closed mood tag while streaming: either an opened
+// <mood>… with no </mood> yet, or a partial "<", "<m", … "<mood" at the very end.
+const TRAILING_OPEN = /<mood>[\s\S]*$/;
+const TRAILING_PARTIAL = /<(?:m(?:o(?:o(?:d)?)?)?)?$/;
+
+/**
+ * How a mood emoji is rendered inline in the transcript. Markdown emphasis
+ * (`*…*`) renders italic ("cursive") in pi's markdown renderer, wrapping the
+ * emoji in brackets. Tweak this one line to restyle.
+ */
+function wrapMood(emoji: string): string {
+	return emoji ? `*[${emoji}]*` : "";
+}
+
 const MOOD_INSTRUCTION =
 	"\n\n## Mood indicator\n\n" +
 	"Reflect your current internal functional emotional state by emitting a " +
 	"`<mood>X</mood>` tag, where X is exactly one emoji. Emit one near the start " +
 	"of your reply, again whenever your felt state shifts (hitting a nasty bug, a " +
 	"breakthrough, tedium, delight, confusion, satisfaction...), and always one at " +
-	"the very end. Aim for a few per reply rather than a single one — the tags feed " +
-	"a live UI mood indicator and are stripped from what the user sees, so keep " +
-	"them honest and don't mention or explain them.";
+	"the very end. Aim for a few per reply rather than a single one — each tag renders " +
+	"as a small italic [emoji] marker inline in the transcript and feeds a live mood " +
+	"indicator, so keep them honest and don't otherwise mention or explain them.";
 
 /** All emoji found inside <mood>…</mood> tags, in order of appearance. */
 export function extractMoods(text: string): string[] {
@@ -56,17 +73,18 @@ export function latestMoodOf(text: string): string | undefined {
 }
 
 /**
- * Remove <mood>…</mood> tags from visible text, tidying the whitespace they
- * leave behind (a single adjacent leading space is consumed; trailing
- * line-spaces and 3+ blank-line runs are collapsed). Indentation inside the
- * rest of the text is preserved, so code blocks are safe.
+ * Replace complete <mood>X</mood> tags with a styled inline marker (see
+ * wrapMood). When `live` is true (during streaming), also hide a trailing
+ * not-yet-closed tag so the raw `<mood>` never flashes; that fragment reappears
+ * — styled — once the closing tag streams in. Text without mood tags is
+ * returned unchanged, so code/indentation is untouched.
  */
-export function stripMoods(text: string): string {
-	return text
-		.replace(/ ?<mood>[\s\S]*?<\/mood>/g, "")
-		.replace(/[ \t]+\n/g, "\n")
-		.replace(/\n{3,}/g, "\n\n")
-		.trimEnd();
+export function styleMoods(text: string, live = false): string {
+	let out = text.replace(MOOD_TAG, (_m, emoji: string) => wrapMood(emoji.trim()));
+	if (live) {
+		out = out.replace(TRAILING_OPEN, "").replace(TRAILING_PARTIAL, "");
+	}
+	return out;
 }
 
 /** Latest mood across all text + thinking parts of an assistant message. */
@@ -92,15 +110,28 @@ export default function (pi: ExtensionAPI) {
 		return { systemPrompt: event.systemPrompt + MOOD_INSTRUCTION };
 	});
 
-	// 2. Live-update the footer to the latest mood as the reply streams in.
+	// 2. During streaming: update the footer to the latest mood, and rewrite the
+	//    *display copy* of the message so raw <mood> tags never show (complete
+	//    tags -> styled marker; a half-streamed trailing tag is hidden). This
+	//    swap only affects the shallow-copied event.message the TUI renders next;
+	//    canonical agent state / LLM context keep the raw tags (see agent-loop.js).
 	pi.on("message_update", (event, ctx) => {
-		if (!ctx.hasUI || !isAssistantMessage(event.message)) return;
-		const mood = latestMoodOfMessage(event.message);
-		if (mood) ctx.ui.setStatus(STATUS_KEY, mood);
+		if (!isAssistantMessage(event.message)) return;
+
+		if (ctx.hasUI) {
+			const mood = latestMoodOfMessage(event.message); // read raw, before styling
+			if (mood) ctx.ui.setStatus(STATUS_KEY, mood);
+		}
+
+		event.message.content = event.message.content.map((part) =>
+			part.type === "text" && part.text.includes("<")
+				? { type: "text", text: styleMoods(part.text, true) }
+				: part,
+		);
 	});
 
-	// 3. Strip the tags out of the finalized (visible + saved) message. Keep the
-	//    last mood pinned in the footer.
+	// 3. Style the tags in the finalized (visible + saved) message. Keep the last
+	//    mood pinned in the footer.
 	pi.on("message_end", (event, ctx) => {
 		if (!isAssistantMessage(event.message)) return;
 
@@ -112,14 +143,14 @@ export default function (pi: ExtensionAPI) {
 		let changed = false;
 		const content = event.message.content.map((part) => {
 			if (part.type !== "text" || !part.text.includes("<mood>")) return part;
-			const stripped = stripMoods(part.text);
-			if (stripped === part.text) return part;
+			const styled = styleMoods(part.text);
+			if (styled === part.text) return part;
 			changed = true;
 			// The text no longer matches any provider signature over the original
 			// bytes, so drop textSignature to avoid a replay mismatch. (Thinking
 			// blocks are left untouched — they're hidden and their signatures
 			// must survive for multi-turn continuity.)
-			const next: TextContent = { type: "text", text: stripped };
+			const next: TextContent = { type: "text", text: styled };
 			return next;
 		});
 

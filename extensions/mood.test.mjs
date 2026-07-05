@@ -32,7 +32,7 @@ const { createJiti } = await import(`${jitiDir}/lib/jiti-static.mjs`);
 const jiti = createJiti(import.meta.url);
 
 const mood = await jiti.import(resolve(HERE, "mood.ts"));
-const { extractMoods, latestMoodOf, stripMoods, latestMoodOfMessage } = mood;
+const { extractMoods, latestMoodOf, styleMoods, latestMoodOfMessage } = mood;
 
 // Register the three handlers against a mock pi; return them by event name.
 function loadHandlers() {
@@ -83,19 +83,28 @@ test("latestMoodOf: returns the last tag, or undefined", () => {
 	assert.equal(latestMoodOf("nothing"), undefined);
 });
 
-test("stripMoods: end-of-line and standalone tags leave clean text", () => {
-	assert.equal(stripMoods("All tests pass. <mood>🎉</mood>"), "All tests pass.");
-	assert.equal(stripMoods("Line one\n\n<mood>🤔</mood>\n\nLine two"), "Line one\n\nLine two");
+test("styleMoods: complete tags become italic bracketed markers", () => {
+	assert.equal(styleMoods("All tests pass. <mood>🎉</mood>"), "All tests pass. *[🎉]*");
+	assert.equal(styleMoods("a <mood>🙂</mood> b <mood>😤</mood>"), "a *[🙂]* b *[😤]*");
 });
 
-test("stripMoods: inline tag consumes one adjacent space", () => {
-	assert.equal(stripMoods("I feel <mood>😤</mood> stuck"), "I feel stuck");
+test("styleMoods: live mode hides a half-streamed trailing tag", () => {
+	assert.equal(styleMoods("working <mood>😤", true), "working "); // opened, not closed
+	assert.equal(styleMoods("working <mood>", true), "working ");
+	assert.equal(styleMoods("done <moo", true), "done "); // partial open fragment
+	assert.equal(styleMoods("done <", true), "done ");
+	// a completed earlier tag survives while the trailing one is hidden
+	assert.equal(styleMoods("<mood>🙂</mood> then <mo", true), "*[🙂]* then ");
 });
 
-test("stripMoods: preserves code indentation and returns unchanged text as-is", () => {
+test("styleMoods: non-live keeps a real '<' in content as-is", () => {
+	assert.equal(styleMoods("if a < b then"), "if a < b then");
+});
+
+test("styleMoods: preserves code indentation and returns unchanged text as-is", () => {
 	const code = "Here:\n\n```py\ndef f():\n    return 1\n```";
-	assert.equal(stripMoods(code), code);
-	assert.equal(stripMoods("plain, no tags"), "plain, no tags");
+	assert.equal(styleMoods(code), code);
+	assert.equal(styleMoods("plain, no tags"), "plain, no tags");
 });
 
 test("latestMoodOfMessage: scans text and thinking parts in order", () => {
@@ -118,14 +127,24 @@ test("before_agent_start: returns chained systemPrompt with the instruction", ()
 	// Must not mutate in place — only the returned value carries the change.
 });
 
-test("message_update: pushes latest mood emoji to the footer", () => {
+test("message_update: footer gets latest mood; display content is styled", () => {
 	const h = loadHandlers();
 	const { ctx, status } = mockCtx();
-	h.message_update({ message: asst([text("working <mood>🙂</mood> then <mood>😤</mood>")]) }, ctx);
-	assert.equal(status.mood, "😤");
+	const msg = asst([text("working <mood>🙂</mood> then <mood>😤</mood>")]);
+	h.message_update({ message: msg }, ctx);
+	assert.equal(status.mood, "😤"); // read from raw, before styling
+	assert.equal(msg.content[0].text, "working *[🙂]* then *[😤]*"); // display copy rewritten
 });
 
-test("message_update: no-ops without UI or without a mood", () => {
+test("message_update: hides a half-streamed trailing tag in the display copy", () => {
+	const h = loadHandlers();
+	const { ctx } = mockCtx();
+	const msg = asst([text("progress <mood>😤")]);
+	h.message_update({ message: msg }, ctx);
+	assert.equal(msg.content[0].text, "progress ");
+});
+
+test("message_update: no-ops footer without UI or without a mood", () => {
 	const h = loadHandlers();
 	const noUI = mockCtx({ hasUI: false });
 	h.message_update({ message: asst([text("<mood>🙂</mood>")]) }, noUI.ctx);
@@ -136,7 +155,7 @@ test("message_update: no-ops without UI or without a mood", () => {
 	assert.equal(status.mood, undefined);
 });
 
-test("message_end: strips tags, drops textSignature, keeps role & other blocks", () => {
+test("message_end: styles tags, drops textSignature, keeps role & other blocks", () => {
 	const h = loadHandlers();
 	const { ctx, status } = mockCtx();
 	const thinking = { type: "thinking", thinking: "reasoning", thinkingSignature: "sig-keep" };
@@ -146,13 +165,13 @@ test("message_end: strips tags, drops textSignature, keeps role & other blocks",
 	assert.equal(out.message.role, "assistant");
 	// thinking block untouched (signature preserved for continuity)
 	assert.deepEqual(out.message.content[0], thinking);
-	// text stripped, signature dropped
-	assert.deepEqual(out.message.content[1], { type: "text", text: "All done." });
+	// text styled, signature dropped
+	assert.deepEqual(out.message.content[1], { type: "text", text: "All done. *[🎉]*" });
 	// footer still shows the final mood
 	assert.equal(status.mood, "🎉");
 });
 
-test("message_end: returns undefined when there is nothing to strip", () => {
+test("message_end: returns undefined when there is nothing to style", () => {
 	const h = loadHandlers();
 	const { ctx } = mockCtx();
 	assert.equal(h.message_end({ message: asst([text("no tags")]) }, ctx), undefined);
