@@ -23,6 +23,8 @@ no daemon running when idle):
 	</array>
 	<key>inetdCompatibility</key>
 	<dict><key>Wait</key><false/></dict>
+	<!-- keep pngpaste's stderr (e.g. "no image" error text) off the socket -->
+	<key>StandardErrorPath</key><string>/tmp/pngpaste-clipserve.err</string>
 	<key>Sockets</key>
 	<dict>
 		<key>Listener</key>
@@ -68,3 +70,11 @@ Notes:
   to handle stale sockets). With et, `-r` also accepts socket paths.
 - The extension reads `PI_REMOTE_CLIP_PORT` / `PI_REMOTE_CLIP_SOCK` env vars
   to override defaults.
+- Empty clipboard: `pngpaste` exits non-zero with an error on stderr. In inetd
+  mode launchd would connect stderr to the socket too; the `StandardErrorPath`
+  key in the plist redirects it to `/tmp/pngpaste-clipserve.err` so the
+  extension gets a clean empty read. (Even without it, the image-magic
+  sniffing rejects the error text.) pi shows "No image on client clipboard"
+  either way.
+- Non-PNG images on the clipboard (e.g. JPEG copied from a browser) are fine:
+  pngpaste converts to PNG on the way out.
