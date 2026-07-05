@@ -127,19 +127,6 @@ test("latestMoodOfMessage: scans text and thinking parts in order", () => {
 	assert.equal(latestMoodOfMessage(asst([text("no mood")])), undefined);
 });
 
-test("latestMoodOfMessage: textOnly ignores moods in hidden thinking parts", () => {
-	// Reply whose LAST mood lives in a thinking block that comes after the text.
-	const msg = asst([
-		text("progress <mood>🙂</mood>"),
-		{ type: "thinking", thinking: "more reasoning <mood>🧐</mood>" },
-	]);
-	// Default scan sees the (hidden) thinking mood last...
-	assert.equal(latestMoodOfMessage(msg), "🧐");
-	// ...but the status uses textOnly, so it matches the visible inline marker.
-	assert.equal(latestMoodOfMessage(msg, true), "🙂");
-	assert.equal(latestMoodOfMessage(asst([{ type: "thinking", thinking: "x <mood>🧐</mood>" }]), true), undefined);
-});
-
 // --- handlers -------------------------------------------------------------
 
 test("before_agent_start: returns chained systemPrompt with the instruction", () => {

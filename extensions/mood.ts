@@ -107,17 +107,12 @@ export function styleMoods(text: string, live = false): string {
 	return out;
 }
 
-/**
- * Latest mood in an assistant message. By default scans text + thinking parts;
- * with `textOnly` it scans only text parts, so it matches what's actually shown
- * inline in the transcript (thinking blocks are hidden in the TUI). The status
- * bar uses `textOnly` so it can never diverge from the visible inline marker.
- */
-export function latestMoodOfMessage(message: AssistantMessage, textOnly = false): string | undefined {
+/** Latest mood across all text + thinking parts of an assistant message. */
+export function latestMoodOfMessage(message: AssistantMessage): string | undefined {
 	let latest: string | undefined;
 	for (const part of message.content) {
 		const source =
-			part.type === "text" ? part.text : !textOnly && part.type === "thinking" ? part.thinking : "";
+			part.type === "text" ? part.text : part.type === "thinking" ? part.thinking : "";
 		if (!source) continue;
 		const m = latestMoodOf(source);
 		if (m) latest = m;
@@ -144,7 +139,7 @@ export default function (pi: ExtensionAPI) {
 		if (!isAssistantMessage(event.message)) return;
 
 		if (ctx.hasUI) {
-			const mood = latestMoodOfMessage(event.message, true); // visible (text-only) mood, read raw
+			const mood = latestMoodOfMessage(event.message); // read raw, before styling
 			if (mood) ctx.ui.setStatus(STATUS_KEY, mood);
 		}
 
@@ -161,7 +156,7 @@ export default function (pi: ExtensionAPI) {
 		if (!isAssistantMessage(event.message)) return;
 
 		if (ctx.hasUI) {
-			const mood = latestMoodOfMessage(event.message, true); // visible (text-only) mood
+			const mood = latestMoodOfMessage(event.message);
 			if (mood) ctx.ui.setStatus(STATUS_KEY, mood);
 		}
 
