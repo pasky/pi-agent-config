@@ -36,10 +36,12 @@ function splitSystemPrompt(prompt: string): { head: string; tail: string } {
 }
 
 // Detect the pi package root from the default prompt head, which always
-// contains "Main documentation: <root>/README.md". Used to expand @PIROOT@
+// contains "- Main documentation: <root>/README.md". Used to expand @PIROOT@
 // placeholders so prompt files stay portable across machines/installs.
-function detectPiRoot(prompt: string): string | undefined {
-	return prompt.match(/Main documentation: (.+)\/README\.md/)?.[1];
+// Callers should pass the head only (not the tail, which contains arbitrary
+// project context that could false-match). Tolerates Windows backslashes.
+function detectPiRoot(promptHead: string): string | undefined {
+	return promptHead.match(/^- Main documentation: (.+)[/\\]README\.md$/m)?.[1];
 }
 
 function getPromptPath(provider: string): string {
@@ -102,16 +104,23 @@ export default function providerSystemPrompt(pi: ExtensionAPI) {
 		if (!existsSync(path)) return;
 
 		let customHead = readFileSync(path, "utf8").trimEnd();
-		const piRoot = detectPiRoot(event.systemPrompt);
+		const { head: defaultHead, tail } = splitSystemPrompt(event.systemPrompt);
+		const piRoot = detectPiRoot(defaultHead);
 		if (piRoot) {
 			customHead = customHead.replaceAll("@PIROOT@", piRoot);
 		} else if (customHead.includes("@PIROOT@")) {
+			// Fail closed: drop whole paragraphs containing unresolved placeholders
+			// (e.g. the entire Pi documentation section) rather than sending literal
+			// @PIROOT@ paths or an orphaned section header to the model.
+			customHead = customHead
+				.split("\n\n")
+				.filter((block) => !block.includes("@PIROOT@"))
+				.join("\n\n");
 			ctx.ui.notify(
-				`provider-system-prompt: cannot resolve @PIROOT@ in ${provider}.md (marker missing from default prompt)`,
+				`provider-system-prompt: dropped @PIROOT@ sections in ${provider}.md (marker missing from default prompt)`,
 				"warning",
 			);
 		}
-		const { tail } = splitSystemPrompt(event.systemPrompt);
 		return {
 			systemPrompt: `${customHead}${tail}`,
 		};
