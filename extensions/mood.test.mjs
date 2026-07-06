@@ -32,7 +32,7 @@ const { createJiti } = await import(`${jitiDir}/lib/jiti-static.mjs`);
 const jiti = createJiti(import.meta.url);
 
 const mood = await jiti.import(resolve(HERE, "mood.ts"));
-const { extractMoods, latestMoodOf, styleMoods, latestMoodOfMessage } = mood;
+const { extractMoods, latestMoodOf, styleMoods, latestMoodOfMessage, latestMoodForStatus } = mood;
 
 // Register the three handlers against a mock pi; return them by event name.
 function loadHandlers() {
@@ -125,6 +125,23 @@ test("latestMoodOfMessage: scans text and thinking parts in order", () => {
 	]);
 	assert.equal(latestMoodOfMessage(msg), "🎉");
 	assert.equal(latestMoodOfMessage(asst([text("no mood")])), undefined);
+});
+
+test("latestMoodForStatus: recovers the mood from ALREADY-STYLED content", () => {
+	// Regression for the status-vs-text bug: by the time the status reads the
+	// message, message_update has usually rewritten the raw <mood> tags to *[X]*.
+	// A raw-only reader returned undefined -> setStatus never fired -> blank/stale
+	// pin. latestMoodForStatus must recover the latest mood from styled markers.
+	const styled = asst([
+		{ type: "thinking", thinking: "reasoning, no mood" },
+		text("intro *[🧪]* middle *[🤨]* end *[🫡]*"),
+	]);
+	assert.equal(latestMoodOfMessage(styled), undefined); // raw-only reader is blind to styled markers
+	assert.equal(latestMoodForStatus(styled), "🫡"); // tolerant reader recovers it
+	// Still works on raw tags, and on a mix (last marker wins in document order).
+	assert.equal(latestMoodForStatus(asst([text("a <mood>😀</mood> b <mood>😎</mood>")])), "😎");
+	assert.equal(latestMoodForStatus(asst([text("raw <mood>😀</mood> then styled *[🫡]*")])), "🫡");
+	assert.equal(latestMoodForStatus(asst([text("nothing here")])), undefined);
 });
 
 // --- handlers -------------------------------------------------------------

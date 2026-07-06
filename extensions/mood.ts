@@ -120,6 +120,36 @@ export function latestMoodOfMessage(message: AssistantMessage): string | undefin
 	return latest;
 }
 
+// Matches a mood in EITHER raw (<mood>X</mood>) or already-styled (*[X]*) form.
+const MOOD_MARKER = /<mood>([\s\S]*?)<\/mood>|\*\[([^\]\n]+)\]\*/g;
+
+/**
+ * Latest mood for the STATUS BAR, tolerant of already-styled `*[X]*` markers.
+ *
+ * Why this exists (and why the status can't just reuse latestMoodOfMessage):
+ * the message_update handler rewrites `event.message.content` into styled form
+ * for display. Empirically that rewrite is visible to *later* reads of the same
+ * message — subsequent streaming deltas AND message_end — so by the time we read
+ * for the status the raw `<mood>` tags are usually already gone, replaced by
+ * `*[X]*`. A raw-only reader therefore returns undefined and setStatus never
+ * fires, leaving the pin blank or frozen on a stale value (this is the
+ * status-vs-text mismatch bug). Reading both forms recovers the mood regardless
+ * of whether that particular read caught the content pre- or post-styling.
+ */
+export function latestMoodForStatus(message: AssistantMessage): string | undefined {
+	let latest: string | undefined;
+	for (const part of message.content) {
+		const source =
+			part.type === "text" ? part.text : part.type === "thinking" ? part.thinking : "";
+		if (!source) continue;
+		for (const m of source.matchAll(MOOD_MARKER)) {
+			const emoji = (m[1] ?? m[2] ?? "").trim();
+			if (emoji) latest = emoji;
+		}
+	}
+	return latest;
+}
+
 function isAssistantMessage(message: unknown): message is AssistantMessage {
 	return !!message && typeof message === "object" && (message as { role?: unknown }).role === "assistant";
 }
@@ -139,7 +169,9 @@ export default function (pi: ExtensionAPI) {
 		if (!isAssistantMessage(event.message)) return;
 
 		if (ctx.hasUI) {
-			const mood = latestMoodOfMessage(event.message); // read raw, before styling
+			// Tolerant read: our own styling below (and prior deltas') may have already
+			// rewritten the raw tags to *[X]*, so match both forms.
+			const mood = latestMoodForStatus(event.message);
 			if (mood) ctx.ui.setStatus(STATUS_KEY, mood);
 		}
 
@@ -156,7 +188,7 @@ export default function (pi: ExtensionAPI) {
 		if (!isAssistantMessage(event.message)) return;
 
 		if (ctx.hasUI) {
-			const mood = latestMoodOfMessage(event.message);
+			const mood = latestMoodForStatus(event.message);
 			if (mood) ctx.ui.setStatus(STATUS_KEY, mood);
 		}
 
