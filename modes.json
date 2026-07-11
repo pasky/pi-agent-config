@@ -4,17 +4,12 @@
   "modes": {
     "smart": {
       "provider": "anthropic",
-      "modelId": "claude-opus-4-8",
-      "thinkingLevel": "high"
-    },
-    "fable": {
-      "provider": "anthropic",
       "modelId": "claude-fable-5",
       "thinkingLevel": "high"
     },
     "deep": {
       "provider": "openai-codex",
-      "modelId": "gpt-5.5",
+      "modelId": "gpt-5.6-sol",
       "thinkingLevel": "xhigh"
     },
     "local": {
