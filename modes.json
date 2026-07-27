@@ -2,15 +2,30 @@
   "version": 1,
   "currentMode": "smart",
   "modes": {
-    "smart": {
+    "best": {
       "provider": "anthropic",
       "modelId": "claude-fable-5",
+      "thinkingLevel": "high"
+    },
+    "smart": {
+      "provider": "anthropic",
+      "modelId": "claude-opus-5",
       "thinkingLevel": "high"
     },
     "deep": {
       "provider": "openai-codex",
       "modelId": "gpt-5.6-sol",
       "thinkingLevel": "xhigh"
+    },
+    "unchained": {
+      "provider": "openrouter",
+      "modelId": "moonshotai/kimi-k3",
+      "thinkingLevel": "high"
+    },
+    "fast": {
+      "provider": "openai-codex",
+      "modelId": "gpt-5.6-luna",
+      "thinkingLevel": "medium"
     },
     "local": {
       "provider": "llama",
