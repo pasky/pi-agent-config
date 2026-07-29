@@ -10,7 +10,7 @@
     "smart": {
       "provider": "anthropic",
       "modelId": "claude-opus-5",
-      "thinkingLevel": "high"
+      "thinkingLevel": "medium"
     },
     "deep": {
       "provider": "openai-codex",
@@ -25,7 +25,7 @@
     "fast": {
       "provider": "openai-codex",
       "modelId": "gpt-5.6-luna",
-      "thinkingLevel": "medium"
+      "thinkingLevel": "high"
     },
     "local": {
       "provider": "llama",
