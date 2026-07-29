@@ -26,8 +26,8 @@ If the hook doesn't fire (first pull after clone), run `./setup.sh` manually.
 ## What's here
 
 - `settings.json` — default provider/model, enabled models, packages
-- `modes.json` — custom modes (rush/smart/deep/brm)
-- `system-prompt.txt` — custom system prompt
+- `modes.json` — custom modes (best/smart/deep/unchained/fast/local/advisor)
+- `system-prompts/` — custom system prompts
 - `packages/` — pi extensions as git submodules:
   - `pi-amplike` — skills (web search, visit webpage, session query), extensions (modes, handoff, etc.)
   - `pi-sub` — sub-core and sub-bar extensions
