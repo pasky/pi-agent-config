@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "0.82.1",
+  "lastChangelogVersion": "0.83.0",
   "defaultProjectTrust": "always",
   "defaultProvider": "anthropic",
   "defaultModel": "claude-opus-5",
@@ -29,5 +29,9 @@
     "extensions/nw.ts",
     "extensions/mood.ts"
   ],
-  "theme": "dark"
+  "theme": "dark",
+  "showCacheMissNotices": true,
+  "warnings": {
+    "anthropicExtraUsage": false
+  }
 }

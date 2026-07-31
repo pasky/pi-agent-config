@@ -6,4 +6,5 @@
 - After completing a change (code/docs), commit it with a clear message once it builds/tests green — don't leave the work uncommitted waiting to be asked.
 - Entries under `packages/` are git SUBMODULES, each its own repo. To change a file inside one, commit INSIDE that submodule first, then bump the outer repo's pointer with a scoped `git add packages/<name>`. Never `git add -A` from the outer repo for submodule work (it won't reach into submodules and will sweep up unrelated dirty files).
 - Anytime you are going to call `find`, stop and think - 80% likelihood that you are taking a stupid approach (instead of loading an object from storage properly, using `git grep`, etc.), all finds take very long and are I/O heavy.
+- When researching/recommending products to buy (yourself or via subagents): ONLY precise product links (exact product page, verified by visiting it — name, price, stock). Never generic category links, never linkless claims.
 - Releasing a JS package means BOTH halves: `npm publish` AND a GitHub release (`gh release create`) with a proper changelog summarizing the commits since the last tag. The GH release is the half we often forget.
