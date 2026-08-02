@@ -1,7 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
-import { getReadmePath } from "@earendil-works/pi-coding-agent";
+import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const PROMPT_DIR = join(homedir(), ".pi", "agent", "system-prompts");
@@ -49,44 +48,6 @@ function getPromptPath(provider: string): string {
 	return join(PROMPT_DIR, `${provider}.md`);
 }
 
-/**
- * Load `<provider>.md` and resolve its @PIROOT@ placeholders, or undefined when
- * there is no prompt for the provider. `piRoot` is detected from the default
- * prompt when available (see detectPiRoot); pass undefined to fall back to pi's
- * own package root.
- *
- * Fail closed: with no root at all, drop whole paragraphs containing unresolved
- * placeholders (e.g. the entire Pi documentation section) rather than sending
- * literal @PIROOT@ paths or an orphaned section header to the model.
- */
-function loadProviderHead(
-	provider: string,
-	piRoot: string | undefined,
-): { head: string; droppedPlaceholders: boolean } | undefined {
-	const path = getPromptPath(provider);
-	if (!existsSync(path)) return undefined;
-
-	let head = readFileSync(path, "utf8").trimEnd();
-	const root = piRoot ?? detectPiRootFromPackage();
-	if (root) return { head: head.replaceAll("@PIROOT@", root), droppedPlaceholders: false };
-	if (!head.includes("@PIROOT@")) return { head, droppedPlaceholders: false };
-
-	head = head
-		.split("\n\n")
-		.filter((block) => !block.includes("@PIROOT@"))
-		.join("\n\n");
-	return { head, droppedPlaceholders: true };
-}
-
-/** pi's package root, straight from pi itself (README.md lives at its root). */
-function detectPiRootFromPackage(): string | undefined {
-	try {
-		return dirname(getReadmePath());
-	} catch {
-		return undefined;
-	}
-}
-
 function updateStatus(ctx: ExtensionContext, provider: string | undefined) {
 	if (!provider) {
 		ctx.ui.setStatus("provider-system-prompt", undefined);
@@ -127,24 +88,6 @@ export default function providerSystemPrompt(pi: ExtensionAPI) {
 		},
 	});
 
-	// Subagents (pi-amplike) run with no extensions loaded, so the
-	// before_agent_start hook below never fires for them; without this they'd
-	// silently run on pi's default prompt instead of the provider's. Amplike asks
-	// on this channel which prompt a subagent session should use — it knows
-	// nothing about per-provider prompting, we just answer the question.
-	// Synchronous by contract (pi builds the system prompt synchronously).
-	pi.events.on("amplike:system_prompt", (data) => {
-		const request = data as {
-			provider?: string;
-			systemPrompt: string | undefined;
-		};
-		if (!request?.provider) return;
-		// No default prompt string to mine for the root here (the request carries
-		// the custom-prompt slot, which is normally empty), so resolve from pi.
-		const loaded = loadProviderHead(request.provider, undefined);
-		if (loaded) request.systemPrompt = loaded.head;
-	});
-
 	pi.on("session_start", async (_event, ctx) => {
 		updateStatus(ctx, ctx.model?.provider);
 	});
@@ -157,17 +100,29 @@ export default function providerSystemPrompt(pi: ExtensionAPI) {
 		const provider = ctx.model?.provider;
 		if (!provider) return;
 
+		const path = getPromptPath(provider);
+		if (!existsSync(path)) return;
+
+		let customHead = readFileSync(path, "utf8").trimEnd();
 		const { head: defaultHead, tail } = splitSystemPrompt(event.systemPrompt);
-		const loaded = loadProviderHead(provider, detectPiRoot(defaultHead));
-		if (!loaded) return;
-		if (loaded.droppedPlaceholders) {
+		const piRoot = detectPiRoot(defaultHead);
+		if (piRoot) {
+			customHead = customHead.replaceAll("@PIROOT@", piRoot);
+		} else if (customHead.includes("@PIROOT@")) {
+			// Fail closed: drop whole paragraphs containing unresolved placeholders
+			// (e.g. the entire Pi documentation section) rather than sending literal
+			// @PIROOT@ paths or an orphaned section header to the model.
+			customHead = customHead
+				.split("\n\n")
+				.filter((block) => !block.includes("@PIROOT@"))
+				.join("\n\n");
 			ctx.ui.notify(
-				`provider-system-prompt: dropped @PIROOT@ sections in ${provider}.md (pi root not resolvable)`,
+				`provider-system-prompt: dropped @PIROOT@ sections in ${provider}.md (marker missing from default prompt)`,
 				"warning",
 			);
 		}
 		return {
-			systemPrompt: `${loaded.head}${tail}`,
+			systemPrompt: `${customHead}${tail}`,
 		};
 	});
 }
