@@ -1,5 +1,10 @@
 {
   "permissions": {
     "mode": "yolo"
+  },
+  "subagent": {
+    "extensions": [
+      "extensions/provider-system-prompt.ts"
+    ]
   }
 }
