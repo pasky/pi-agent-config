@@ -5,7 +5,7 @@
         "z-ai/glm-5.2": {
           "compat": {
             "openRouterRouting": {
-              "order": ["atlas-cloud", "parasail", "z-ai"],
+              "order": ["baseten/fp8", "z-ai", "atlas-cloud"],
               "quantizations": ["fp8"],
               "allow_fallbacks": false
             }
