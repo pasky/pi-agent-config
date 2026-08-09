@@ -100,6 +100,11 @@ export default function providerSystemPrompt(pi: ExtensionAPI) {
 		const provider = ctx.model?.provider;
 		if (!provider) return;
 
+		// Yield to an explicit user prompt override (--system-prompt, .pi/SYSTEM.md,
+		// ~/.pi/agent/SYSTEM.md, custom prompt templates). Otherwise this extension
+		// would silently clobber the very prompt the user asked for.
+		if (event.systemPromptOptions?.customPrompt) return;
+
 		const path = getPromptPath(provider);
 		if (!existsSync(path)) return;
 
