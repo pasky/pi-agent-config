@@ -23,17 +23,6 @@ The post-merge hook runs `setup.sh` automatically (submodule update + npm instal
 
 If the hook doesn't fire (first pull after clone), run `./setup.sh` manually.
 
-## What's here
-
-- `settings.json` — default provider/model, enabled models, packages
-- `modes.json` — custom modes (best/smart/deep/unchained/fast/local/advisor)
-- `system-prompts/` — custom system prompts
-- `packages/` — pi extensions as git submodules:
-  - `pi-amplike` — skills (web search, visit webpage, session query), extensions (modes, handoff, etc.)
-  - `pi-sub` — sub-core and sub-bar extensions
-  - `pi-side-agents` — background side agents in tmux worktrees for parallel async workflows
-  - `chrome-cdp-skill` — skill for interacting with a live Chrome browser session via CDP
-
 ## What's excluded
 
 - `auth.json` — OAuth tokens, recreated by `pi` on each machine
