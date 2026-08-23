@@ -10,3 +10,4 @@
 - When researching/recommending products to buy (yourself or via subagents): ONLY precise product links (exact product page, verified by visiting it — name, price, stock). Never generic category links, never linkless claims.
 - Releasing a JS package means BOTH halves: `npm publish` AND a GitHub release (`gh release create`) with a proper changelog summarizing the commits since the last tag. The GH release is the half we often forget.
 - If you're addressed as "Bob" it means you are going down a wrong path and pasky is frustrated.
+- Review/subagent scripts must be memory-bounded on dense meshes, images, and large arrays. A Viktor-mask review once exhausted roughly 55 GB by running an unconstrained Python geometry check. Before execution, inspect dimensions and algorithmic allocation, avoid full ray/triangle or other Cartesian-product arrays, batch/stream work, and impose a practical process memory limit; do not blindly rerun a failed command.
