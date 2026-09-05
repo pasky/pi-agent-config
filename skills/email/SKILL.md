@@ -8,6 +8,18 @@ compatibility: Requires local notmuch index
 
 pasky's mail lives in `~/Mail`, indexed by **notmuch**.
 
+## FIRST: refresh the index
+
+The index is NOT updated automatically on delivery. If you are looking for
+anything from the last day or so, run this first, always:
+
+```bash
+notmuch new
+```
+
+(2026-09-03: a booking confirmation that had arrived 20 minutes earlier was
+invisible to every search until `notmuch new` was run.)
+
 ## Search
 
 ```bash
@@ -15,8 +27,13 @@ notmuch search 'from:kacirek subject:XC40 date:2026-08-21'   # threads
 notmuch search --output=messages 'from:kacirek date:2026-08-21'  # message ids
 ```
 
-Useful terms: `from:` `to:` `subject:` `date:YYYY-MM-DD` (or ranges `date:aug21..`),
-`attachment:name`, `tag:unread`, plain words for full-text.
+Useful terms: `from:` `to:` `subject:` `date:YYYY-MM-DD` (or ranges `date:aug21..`,
+`date:today`, `date:yesterday..`), `attachment:name`, `tag:unread`, plain words
+for full-text.
+
+If a search comes up empty, the fix is `notmuch new`, not grepping
+`~/Maildir` — bodies there are base64/quoted-printable, so grep won't find
+the text anyway.
 
 ## Read a message / thread
 
@@ -25,7 +42,9 @@ notmuch show --format=raw id:MESSAGE_ID          # full RFC822 of one message
 notmuch show --format=json thread:THREADID       # structured whole thread
 ```
 
-For quick body text of a thread, `notmuch show thread:...` (plain format) is fine.
+For quick body text of a thread, `notmuch show thread:...` (plain format) is fine
+(commercial HTML mail like booking.com carries a text/plain alternative, which
+is what gets printed).
 
 ## Extract attachments
 
