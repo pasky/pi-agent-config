@@ -4,7 +4,7 @@
   "modes": {
     "best": {
       "provider": "anthropic",
-      "modelId": "claude-fable-5",
+      "modelId": "claude-fable-5-1",
       "thinkingLevel": "high"
     },
     "smart": {
