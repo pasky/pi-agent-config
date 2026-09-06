@@ -1,6 +1,10 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-/** Finish this response and its entire tool batch, then cancel continuation. */
+/**
+ * One-shot deferred abort: finish the response and every tool in its batch.
+ * Keep retries and automatic compaction suppressed until agent_settled; an
+ * already-issued abort cannot be undone by cancelling the pending request.
+ */
 export default function (pi: ExtensionAPI) {
 	let pending = false;
 	let stopping = false;
@@ -20,7 +24,7 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 			if (stopping) {
-				if (ctx.hasUI) ctx.ui.notify("Already stopping.", "info");
+				if (ctx.hasUI) ctx.ui.notify("Already stopping; the abort cannot be undone. Send a new prompt once idle.", "info");
 				return;
 			}
 			if (arg === "cancel") {
@@ -59,9 +63,10 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	// Pi may prepare auto-compaction before noticing the aborted continuation.
-	// Don't start a separate summarization inference while we're stopping.
-	pi.on("session_before_compact", () => {
-		if (stopping) return { cancel: true };
+	// Don't start automatic summarization while stopping; an explicit /compact
+	// is a separate user request and should follow pi's normal handling.
+	pi.on("session_before_compact", (event) => {
+		if (stopping && event.reason !== "manual") return { cancel: true };
 	});
 
 	pi.on("agent_settled", (_event, ctx) => reset(ctx));

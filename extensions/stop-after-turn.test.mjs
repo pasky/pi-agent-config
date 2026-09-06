@@ -42,7 +42,7 @@ function harness({ idle = false, hasUI = true, signal = new AbortController().si
 	});
 	return {
 		command: (args = "") => command(args, ctx),
-		emit: (name) => events.get(name)?.({}, ctx),
+		emit: (name, event = {}) => events.get(name)?.(event, ctx),
 		aborts: () => aborts,
 		statuses, notes,
 	};
@@ -54,8 +54,6 @@ test("arms immediately, aborts only at turn_end, blocks compaction until settled
 	await h.command(); // repeated command doesn't toggle it off
 	assert.equal(h.aborts(), 0);
 	assert.ok(h.statuses.get("stop-after-turn"));
-	h.emit("tool_result");
-	assert.equal(h.aborts(), 0);
 	assert.equal(h.emit("session_before_compact"), undefined);
 	h.emit("turn_end");
 	assert.equal(h.aborts(), 1);
@@ -97,6 +95,29 @@ test("idle, cancel, invalid arguments, and session changes never arm a later tur
 	assert.match(invalid.notes[0], /Usage:/);
 });
 
+test("cancel after the boundary cannot undo abort or allow a retry", async () => {
+	const h = harness();
+	await h.command();
+	h.emit("turn_end");
+	await h.command("cancel");
+	assert.match(h.notes.at(-1), /abort cannot be undone/);
+	h.emit("turn_start");
+	assert.equal(h.aborts(), 2);
+	h.emit("agent_settled");
+	h.emit("turn_start");
+	assert.equal(h.aborts(), 2);
+});
+
+test("blocks automatic compaction while stopping, but respects manual requests", async () => {
+	const h = harness();
+	await h.command();
+	h.emit("turn_end");
+	for (const reason of ["threshold", "overflow"]) {
+		assert.deepEqual(h.emit("session_before_compact", { reason }), { cancel: true });
+	}
+	assert.equal(h.emit("session_before_compact", { reason: "manual" }), undefined);
+});
+
 test("works without a UI", async () => {
 	const h = harness({ hasUI: false });
 	await h.command();
@@ -113,8 +134,12 @@ const ai = await import(piJiti.esmResolve("@earendil-works/pi-ai"));
 const { getModel } = await import(piJiti.esmResolve("@earendil-works/pi-ai/compat"));
 const { Type } = await import(piJiti.esmResolve("typebox"));
 
-for (const cancel of [false, true]) {
-	test(`real session: mid-tool stop${cancel ? " then cancel" : ""}`, { timeout: 10000 }, async () => {
+for (const { cancel, withTools } of [
+	{ cancel: false, withTools: true },
+	{ cancel: true, withTools: true },
+	{ cancel: false, withTools: false },
+]) {
+	test(`real session: ${withTools ? "mid-tool" : "text-only"} stop${cancel ? " then cancel" : ""}`, { timeout: 10000 }, async () => {
 		const dir = mkdtempSync(join(tmpdir(), "pi-stop-after-turn-test-"));
 		let session;
 		try {
@@ -161,18 +186,23 @@ for (const cancel of [false, true]) {
 			});
 			let inferences = 0;
 			let abortedContinuations = 0;
-			session.agent.streamFunction = (_model, _context, options) => {
+			session.agent.streamFunction = async (_model, _context, options) => {
 				if (options.signal.aborted) {
 					abortedContinuations++;
 					throw new Error("cancelled before inference");
 				}
 				inferences++;
+				if (!withTools && inferences === 1) {
+					started.resolve();
+					await release.promise;
+					assert.equal(options.signal.aborted, false, "current response must finish normally");
+				}
 				const message = {
 					role: "assistant", api: "anthropic-messages", provider: "anthropic", model: "claude-sonnet-4-5",
-					content: inferences === 1
+					content: withTools && inferences === 1
 						? ["one", "two"].map((id) => ({ type: "toolCall", id, name: "wait", arguments: {} }))
 						: [{ type: "text", text: "done" }],
-					stopReason: inferences === 1 ? "toolUse" : "stop", timestamp: Date.now(),
+					stopReason: withTools && inferences === 1 ? "toolUse" : "stop", timestamp: Date.now(),
 					usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2,
 						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
 				};
@@ -192,10 +222,11 @@ for (const cancel of [false, true]) {
 			if (cancel) await session.prompt("/stop-after-turn cancel");
 			release.resolve();
 			await run;
-			assert.deepEqual(completed.sort(), ["one", "two"]);
-			assert.equal(session.messages.filter((m) => m.role === "toolResult").length, 2);
+			assert.deepEqual(completed.sort(), withTools ? ["one", "two"] : []);
+			assert.equal(session.messages.filter((m) => m.role === "toolResult").length, withTools ? 2 : 0);
+			if (!withTools) assert.equal(session.messages.at(-1).stopReason, "stop");
 			assert.equal(inferences, cancel ? 2 : 1);
-			assert.equal(abortedContinuations, cancel ? 0 : 1);
+			assert.equal(abortedContinuations, !cancel && withTools ? 1 : 0);
 			assert.equal(session.isIdle, true);
 			if (!cancel) assert.deepEqual(restoredQueue, { steering: ["queued steering"], followUp: ["queued follow-up"] });
 			assert.equal(session.messages.some((m) => m.role === "user" && JSON.stringify(m).includes("/stop-after-turn")), false);

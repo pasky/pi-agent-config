@@ -23,9 +23,14 @@ The post-merge hook runs `setup.sh` automatically (submodule update + npm instal
 
 If the hook doesn't fire (first pull after clone), run `./setup.sh` manually.
 
-## Local commands
+## `/stop-after-turn`
 
-- `/stop-after-turn` — finish the current model response and all its tool calls, then stop before further inference. Works while a tool is running; unlike Esc, it doesn't interrupt the tools. In the TUI, queued messages return to the editor. Use `/stop-after-turn cancel` to disarm. One-shot; does nothing when idle. Run `/reload` after installing.
+Finish the current model response and all its tool calls, then stop before further automatic inference. Unlike Esc, it doesn't interrupt the tools. In the TUI, queued messages return to the editor, even when the response ends without tool calls.
+
+- Run `/reload` after installing, then `/stop-after-turn` while a response or tool is running.
+- Use `/stop-after-turn cancel` to disarm **before the turn ends**; an already-issued abort cannot be undone.
+- One-shot; does nothing without an active agent turn. It cannot be armed between runs during retry backoff or overflow compaction, even if a retry will follow.
+- Suppresses automatic compaction while stopping, but leaves explicit `/compact` requests to pi's normal handling.
 
 In headless/RPC use, pi's default abort does not restore queued messages: steering may enter the transcript without an answer. Avoid pending messages there, or supply an SDK abort handler that preserves the queues.
 
