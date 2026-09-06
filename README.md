@@ -23,6 +23,12 @@ The post-merge hook runs `setup.sh` automatically (submodule update + npm instal
 
 If the hook doesn't fire (first pull after clone), run `./setup.sh` manually.
 
+## Local commands
+
+- `/stop-after-turn` — finish the current model response and all its tool calls, then stop before further inference. Works while a tool is running; unlike Esc, it doesn't interrupt the tools. In the TUI, queued messages return to the editor. Use `/stop-after-turn cancel` to disarm. One-shot; does nothing when idle. Run `/reload` after installing.
+
+Test: `node --test extensions/stop-after-turn.test.mjs` (uses the installed pi SDK with a mock model).
+
 ## What's excluded
 
 - `auth.json` — OAuth tokens, recreated by `pi` on each machine
