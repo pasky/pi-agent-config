@@ -28,8 +28,9 @@ export default function (pi: ExtensionAPI) {
 				if (ctx.hasUI) ctx.ui.notify("Stop-after-turn cancelled.", "info");
 				return;
 			}
-			if (ctx.isIdle()) {
-				if (ctx.hasUI) ctx.ui.notify("Already idle; no stop scheduled.", "info");
+			// Manual compaction is busy too, but has no agent turn to stop.
+			if (ctx.isIdle() || !ctx.signal) {
+				if (ctx.hasUI) ctx.ui.notify("No active turn; no stop scheduled.", "info");
 				return;
 			}
 			pending = true;

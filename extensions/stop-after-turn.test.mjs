@@ -16,7 +16,7 @@ const { createJiti } = await import(pathToFileURL(join(dirname(require.resolve("
 const jiti = createJiti(import.meta.url);
 const { default: extension } = await jiti.import(new URL("./stop-after-turn.ts", import.meta.url).pathname);
 
-function harness({ idle = false, hasUI = true } = {}) {
+function harness({ idle = false, hasUI = true, signal = new AbortController().signal } = {}) {
 	const events = new Map();
 	let command;
 	let aborts = 0;
@@ -24,6 +24,7 @@ function harness({ idle = false, hasUI = true } = {}) {
 	const notes = [];
 	const ctx = {
 		hasUI,
+		signal,
 		isIdle: () => idle,
 		abort: () => { aborts++; },
 		ui: {
@@ -76,6 +77,10 @@ test("idle, cancel, invalid arguments, and session changes never arm a later tur
 	await idle.command();
 	idle.emit("turn_end");
 	assert.equal(idle.aborts(), 0);
+	const compacting = harness({ signal: null }); // busy, but no agent run
+	await compacting.command();
+	compacting.emit("turn_end");
+	assert.equal(compacting.aborts(), 0);
 	for (const reset of ["cancel", "session_start", "session_shutdown", "agent_settled"]) {
 		const h = harness();
 		await h.command();
@@ -151,7 +156,7 @@ for (const cancel of [false, true]) {
 				abortHandler: () => {
 					const queue = session.clearQueue();
 					if (queue.steering.length || queue.followUp.length) restoredQueue = queue;
-					void session.abort();
+					session.agent.abort();
 				},
 			});
 			let inferences = 0;

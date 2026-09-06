@@ -27,6 +27,8 @@ If the hook doesn't fire (first pull after clone), run `./setup.sh` manually.
 
 - `/stop-after-turn` — finish the current model response and all its tool calls, then stop before further inference. Works while a tool is running; unlike Esc, it doesn't interrupt the tools. In the TUI, queued messages return to the editor. Use `/stop-after-turn cancel` to disarm. One-shot; does nothing when idle. Run `/reload` after installing.
 
+In headless/RPC use, pi's default abort does not restore queued messages: steering may enter the transcript without an answer. Avoid pending messages there, or supply an SDK abort handler that preserves the queues.
+
 Test: `node --test extensions/stop-after-turn.test.mjs` (uses the installed pi SDK with a mock model).
 
 ## What's excluded
