@@ -14,15 +14,15 @@
     },
     "deep": {
       "provider": "openai-codex",
-      "modelId": "gpt-5.6-sol",
-      "thinkingLevel": "xhigh"
+      "modelId": "gpt-6-astra",
+      "thinkingLevel": "high"
     },
     "unchained": {
       "provider": "openrouter",
       "modelId": "moonshotai/kimi-k3",
       "thinkingLevel": "high"
     },
-    "fast": {
+    "research": {
       "provider": "openai-codex",
       "modelId": "gpt-5.6-luna",
       "thinkingLevel": "high"

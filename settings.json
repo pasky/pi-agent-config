@@ -1,16 +1,17 @@
 {
-  "lastChangelogVersion": "0.85.0",
+  "lastChangelogVersion": "0.85.1",
   "defaultProjectTrust": "always",
   "defaultProvider": "anthropic",
-  "defaultModel": "claude-opus-5",
-  "defaultThinkingLevel": "medium",
+  "defaultModel": "claude-fable-5-1",
+  "defaultThinkingLevel": "high",
   "enabledModels": [
     "anthropic/claude-fable-5-1",
     "openai-codex/gpt-5.6-sol",
     "openai-codex/gpt-5.6-luna",
     "openrouter/z-ai/glm-5.2",
     "openrouter/moonshotai/kimi-k3",
-    "anthropic/claude-opus-5"
+    "anthropic/claude-opus-5",
+    "openai-codex/gpt-6-astra"
   ],
   "hideThinkingBlock": false,
   "packages": [
