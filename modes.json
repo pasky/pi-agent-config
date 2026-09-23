@@ -9,7 +9,7 @@
     },
     "smart": {
       "provider": "anthropic",
-      "modelId": "claude-opus-5",
+      "modelId": "claude-opus-5-5",
       "thinkingLevel": "medium"
     },
     "deep": {
