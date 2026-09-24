@@ -1,8 +1,8 @@
 {
-  "lastChangelogVersion": "0.87.0",
+  "lastChangelogVersion": "0.87.1",
   "defaultProjectTrust": "always",
   "defaultProvider": "anthropic",
-  "defaultModel": "claude-fable-5-1",
+  "defaultModel": "claude-opus-5-5",
   "defaultThinkingLevel": "high",
   "enabledModels": [
     "anthropic/claude-fable-5-1",
