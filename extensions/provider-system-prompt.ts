@@ -5,7 +5,17 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 
 const PROMPT_DIR = join(homedir(), ".pi", "agent", "system-prompts");
 
+// Everything from the first of these markers on is kept (the "tail"); the part
+// before it is the "head" that a provider prompt replaces. Only used by the
+// bootstrap command and for @PIROOT@ detection: the prompt itself is applied
+// through systemPromptOptions.customPrompt, so pi renders the tail sections.
 const TAIL_MARKERS = [
+	// pi >=0.87 renders structured sections as <name>...</name> blocks; the ones
+	// after the default preamble/tools/rules/docs belong to the tail.
+	"\n\n<addendum>\n",
+	"\n\n<project_context>\n",
+	"\n\n<skills>\n",
+	"\n\n<cwd>\n",
 	// pi >=0.79 emits project context (AGENTS.md/CLAUDE.md) under this XML block
 	// for custom prompts. Must be listed so the split keeps it in the tail.
 	"\n\n<project_context>\n\n",
@@ -109,7 +119,7 @@ export default function providerSystemPrompt(pi: ExtensionAPI) {
 		if (!existsSync(path)) return;
 
 		let customHead = readFileSync(path, "utf8").trimEnd();
-		const { head: defaultHead, tail } = splitSystemPrompt(event.systemPrompt);
+		const { head: defaultHead } = splitSystemPrompt(event.systemPrompt);
 		const piRoot = detectPiRoot(defaultHead);
 		if (piRoot) {
 			customHead = customHead.replaceAll("@PIROOT@", piRoot);
@@ -126,8 +136,10 @@ export default function providerSystemPrompt(pi: ExtensionAPI) {
 				"warning",
 			);
 		}
-		return {
-			systemPrompt: `${customHead}${tail}`,
-		};
+		// Swap in the provider prompt as pi's custom preamble instead of returning
+		// a whole systemPrompt string: pi then still renders the addendum
+		// (APPEND_SYSTEM.md), project context (AGENTS.md), skills and cwd sections
+		// after it, without us having to find them in the rendered text.
+		event.systemPromptOptions.customPrompt = customHead;
 	});
 }
