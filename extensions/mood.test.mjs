@@ -33,6 +33,10 @@ const jiti = createJiti(import.meta.url);
 
 const mood = await jiti.import(resolve(HERE, "mood.ts"));
 const { extractMoods, latestMoodOf, styleMoods, latestMoodOfMessage, latestMoodForStatus } = mood;
+const { buildSystemPrompt, buildSystemPromptSections } = await jiti.import(
+	resolve(dirname(cliJs), "core/system-prompt.js"),
+);
+const { ExtensionRunner } = await jiti.import(resolve(dirname(cliJs), "core/extensions/runner.js"));
 
 // Register the three handlers against a mock pi; return them by event name.
 function loadHandlers() {
@@ -146,13 +150,51 @@ test("latestMoodForStatus: recovers the mood from ALREADY-STYLED content", () =>
 
 // --- handlers -------------------------------------------------------------
 
-test("before_agent_start: returns chained systemPrompt with the instruction", () => {
+test("before_agent_start: adds an idempotent section without forcing the prompt", () => {
 	const h = loadHandlers();
-	const out = h.before_agent_start({ systemPrompt: "BASE" });
-	assert.ok(out.systemPrompt.startsWith("BASE"));
-	assert.match(out.systemPrompt, /<mood>X<\/mood>/);
-	// Must not mutate in place — only the returned value carries the change.
+	const systemPromptOptions = { customPrompt: "BASE", sections: { other: "KEEP" } };
+	const event = { systemPrompt: "BASE", systemPromptOptions };
+	assert.equal(h.before_agent_start(event), undefined);
+	assert.match(systemPromptOptions.sections.mood_indicator, /<mood>X<\/mood>/);
+	assert.equal(systemPromptOptions.sections.other, "KEEP");
+	assert.equal(systemPromptOptions.customPrompt, "BASE");
+	assert.equal(systemPromptOptions.forceSystemPrompt, undefined);
+	const first = systemPromptOptions.sections.mood_indicator;
+	h.before_agent_start(event);
+	assert.equal(systemPromptOptions.sections.mood_indicator, first);
 });
+
+// Exercise the installed runner: returning systemPrompt sets forceSystemPrompt,
+// which used to hide a later provider customPrompt edit from the actual request.
+for (const providerFirst of [false, true]) {
+	const moodHandler = loadHandlers().before_agent_start;
+	const providerHandler = (event) => {
+		event.systemPromptOptions.customPrompt = "PROVIDER PREAMBLE";
+	};
+	const handlers = providerFirst ? [providerHandler, moodHandler] : [moodHandler, providerHandler];
+	const runner = {
+		extensions: handlers.map((handler, index) => ({
+			path: `test-extension-${index}`,
+			handlers: new Map([["before_agent_start", [handler]]]),
+		})),
+		createContext: () => ({}),
+		assertActive() {},
+		emitError(error) { throw new Error(error.error); },
+	};
+	const { systemPromptOptions } = await ExtensionRunner.prototype.emitBeforeAgentStart.call(
+		runner, "hello", undefined, { cwd: "/test", sections: { other: "KEEP" } },
+	);
+	test(`before_agent_start: provider ${providerFirst ? "before" : "after"} mood reaches the request`, () => {
+		const effective = buildSystemPrompt(systemPromptOptions);
+		const recorded = Object.values(buildSystemPromptSections(systemPromptOptions)).join("\n\n");
+		assert.equal(effective, recorded);
+		assert.equal(systemPromptOptions.forceSystemPrompt, undefined);
+		assert.ok(effective.startsWith("PROVIDER PREAMBLE"));
+		assert.match(effective, /<mood_indicator>\n## Mood indicator/);
+		assert.match(effective, /<other>\nKEEP\n<\/other>/);
+		assert.match(effective, /<cwd>\n\/test\n<\/cwd>/);
+	});
+}
 
 test("message_update: footer gets latest mood; display content is styled", () => {
 	const h = loadHandlers();

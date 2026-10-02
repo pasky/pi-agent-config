@@ -6,10 +6,10 @@
  * emotions by putting an emoji in a UI element."
  *
  * How it works:
- *   1. before_agent_start appends an instruction (chained via the returned
- *      `systemPrompt`, NOT by mutating the event) asking the model to emit
- *      <mood>X</mood> tags frequently — at the start, on every felt-state
- *      shift, and at the end of each reply.
+ *   1. before_agent_start adds a structured `mood_indicator` prompt section
+ *      asking the model to emit <mood>X</mood> tags frequently — at the start,
+ *      on every felt-state shift, and at the end of each reply. This composes
+ *      with provider prompt edits without freezing the whole system prompt.
  *   2. message_update reads the latest <mood> from the streaming reply, pushes
  *      that emoji to the footer, and rewrites the *display copy* of the message
  *      so the raw tags never flash: complete <mood>X</mood> become a styled
@@ -51,7 +51,7 @@ function wrapMood(emoji: string): string {
 }
 
 const MOOD_INSTRUCTION =
-	"\n\n## Mood indicator\n\n" +
+	"## Mood indicator\n\n" +
 	"Reflect your current internal functional emotional state by emitting a " +
 	"`<mood>X</mood>` tag, where X is exactly one emoji. Emit one near the start " +
 	"of your reply, again whenever your felt state shifts (hitting a nasty bug, a " +
@@ -155,9 +155,9 @@ function isAssistantMessage(message: unknown): message is AssistantMessage {
 }
 
 export default function (pi: ExtensionAPI) {
-	// 1. Ask for frequent mood tags (returned, so it chains across extensions).
+	// 1. Keep the instruction in the recorded sections, not a forced prompt snapshot.
 	pi.on("before_agent_start", (event) => {
-		return { systemPrompt: event.systemPrompt + MOOD_INSTRUCTION };
+		event.systemPromptOptions.sections.mood_indicator = MOOD_INSTRUCTION;
 	});
 
 	// 2. During streaming: update the footer to the latest mood, and rewrite the
