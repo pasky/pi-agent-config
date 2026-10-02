@@ -11,4 +11,4 @@
 - Releasing a JS package means BOTH halves: `npm publish` AND a GitHub release (`gh release create`) with a proper changelog summarizing the commits since the last tag. The GH release is the half we often forget.
 - If you're addressed as "Bob" it means you are going down a wrong path and pasky is frustrated.
 - Review/subagent scripts must be memory-bounded on dense meshes, images, and large arrays. A Viktor-mask review once exhausted roughly 55 GB by running an unconstrained Python geometry check. Before execution, inspect dimensions and algorithmic allocation, avoid full ray/triangle or other Cartesian-product arrays, batch/stream work, and impose a practical process memory limit; do not blindly rerun a failed command.
-- In edit/write tool args, type non-ASCII characters (—, ≥, “”) literally; never as `\uXXXX` escapes (they arrive as literal backslash text and break oldText matching). If an edit fails, fix the text and retry the edit tool rather than switching to a Python rewrite.
+- Type non-ASCII (—, ≥, “”) literally in edit args, never as `\uXXXX`; on edit failure, retry edit, don't switch to Python.
