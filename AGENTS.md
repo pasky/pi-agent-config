@@ -12,3 +12,4 @@
 - If you're addressed as "Bob" it means you are going down a wrong path and pasky is frustrated.
 - Review/subagent scripts must be memory-bounded on dense meshes, images, and large arrays. A Viktor-mask review once exhausted roughly 55 GB by running an unconstrained Python geometry check. Before execution, inspect dimensions and algorithmic allocation, avoid full ray/triangle or other Cartesian-product arrays, batch/stream work, and impose a practical process memory limit; do not blindly rerun a failed command.
 - Type non-ASCII (—, ≥, “”) literally in edit args, never as `\uXXXX`; on edit failure, retry edit, don't switch to Python.
+- Before adding a test (including one a reviewer suggests), check that existing tests don't already cover the behavior, and don't write tests that only restate config/data values.
