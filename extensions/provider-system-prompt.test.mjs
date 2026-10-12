@@ -37,14 +37,29 @@ const switched = [
 	user("u2"),
 ];
 
-test("folds prompt updates into the head after a model switch", () => {
+test("folds prompt text into the head after a model switch, keeping tool deltas in place", () => {
 	const out = fold(switched, CLAUDE);
-	assert.equal(out.filter((m) => m.role === "system").length, 1);
-	assert.equal(out[0].role, "system");
 	assert.deepEqual(out[0].sections, { preamble: "claude preamble", cwd: "<cwd>/a</cwd>" });
-	assert.deepEqual(getCurrentTools(out).map((t) => t.name), ["read", "mcp"]);
+	assert.deepEqual(out[0].toolsAdded, [tool("read")]);
+	assert.deepEqual(out[3], { role: "system", content: "", timestamp: 1, toolsAdded: [tool("mcp")] });
 	assert.equal(getCurrentSystemPrompt(out), getCurrentSystemPrompt(switched));
-	assert.deepEqual(out.slice(1), switched.filter((m) => m.role !== "system"));
+	assert.deepEqual(getCurrentTools(out), getCurrentTools(switched));
+	assert.deepEqual(out.filter((m) => m.role !== "system"), switched.filter((m) => m.role !== "system"));
+});
+
+test("drops text-only updates and keeps tool removals after the calls they follow", () => {
+	const messages = [
+		sys({ preamble: "openai preamble" }, { toolsAdded: [tool("old")] }),
+		user("u1"),
+		asst("openai-codex", "gpt"),
+		sys({}, { toolsRemoved: [{ name: "old" }] }),
+		sys({ preamble: "claude preamble" }),
+		user("u2"),
+	];
+	const out = fold(messages, CLAUDE);
+	assert.deepEqual(out[0].toolsAdded, [tool("old")]);
+	assert.equal(out[0].sections.preamble, "claude preamble");
+	assert.deepEqual(out.slice(1), [messages[1], messages[2], messages[3], messages[5]]);
 });
 
 test("head stays stable within the new model's epoch; later updates stay mid-conversation", () => {
@@ -52,7 +67,7 @@ test("head stays stable within the new model's epoch; later updates stay mid-con
 	const messages = [...switched, asst("anthropic", "opus"), later, user("u3")];
 	const out = fold(messages, CLAUDE);
 	assert.deepEqual(out[0], fold(switched, CLAUDE)[0]);
-	assert.equal(out.filter((m) => m.role === "system").length, 2);
+	assert.equal(out.filter((m) => m.role === "system").length, 3);
 	assert.equal(out.at(-2), later);
 });
 
@@ -65,6 +80,8 @@ test("context_with_system hook applies the fold for the session model", async ()
 	const handlers = new Map();
 	extension({ on: (name, fn) => handlers.set(name, fn), registerCommand: () => {} });
 	const hook = handlers.get("context_with_system");
-	assert.equal((await hook({ messages: switched }, { model: { provider: "anthropic", id: "opus" } })).messages.length, 4);
+	assert.equal((await hook({ messages: switched }, { model: CLAUDE })).messages[0].sections.preamble, "claude preamble");
 	assert.equal(await hook({ messages: switched }, { model: undefined }), undefined);
+	// Virtual selections route per request, so the epoch can't be derived from them.
+	assert.equal(await hook({ messages: switched }, { model: { provider: "anthropic", id: "auto", api: "pi-virtual" } }), undefined);
 });

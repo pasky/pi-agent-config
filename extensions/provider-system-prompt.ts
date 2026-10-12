@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { getCurrentSystemMessage } from "@earendil-works/pi-ai";
+import { getCurrentSystemMessage, type SystemMessage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const PROMPT_DIR = join(homedir(), ".pi", "agent", "system-prompts");
@@ -67,11 +67,16 @@ function detectPiRoot(promptHead: string): string | undefined {
  *
  * The epoch is the trailing run of assistant messages produced by the current model
  * (provider + model id); if the last assistant message came from another model, the
- * epoch has not started yet and every system message is folded. Everything before
- * the epoch start is replayed with pi-ai's own getCurrentSystemMessage (the same
- * semantics providers use to collapse system messages), so the folded head is stable
- * across the epoch's requests and its cache keeps hitting, while updates made later
- * within the epoch stay mid-conversation as pi intends.
+ * epoch has not started yet and every system message is folded. The prompt text
+ * (content + sections) of everything before the epoch start is replayed with pi-ai's
+ * own getCurrentSystemMessage, so the folded head is stable across the epoch's
+ * requests, while updates made later within the epoch stay mid-conversation as pi
+ * intends.
+ *
+ * Only prompt text is folded. Tool deltas (toolsAdded/toolsRemoved and anything else
+ * on a system message) stay where they are: tool calls in the history may reference
+ * tools that were declared and later removed, and providers replay that history from
+ * the deltas' positions.
  *
  * Returns undefined when there is nothing to fold.
  */
@@ -81,6 +86,7 @@ export function foldSystemMessagesBeforeModelEpoch<T extends { role: string }>(
 ): T[] | undefined {
 	// pi always leads with the system message; leave anything unexpected untouched.
 	if (messages[0]?.role !== "system") return undefined;
+	type System = SystemMessage & T;
 
 	let epochStart = messages.length;
 	for (let i = messages.length - 1; i >= 0; i--) {
@@ -90,16 +96,38 @@ export function foldSystemMessagesBeforeModelEpoch<T extends { role: string }>(
 		epochStart = i;
 	}
 
-	const prefix = messages.slice(0, epochStart);
-	if (prefix.filter((message) => message.role === "system").length < 2) return undefined;
+	const hasText = (message: System) =>
+		message.content.length > 0 || Object.keys(message.sections ?? {}).length > 0;
+	const updates = messages
+		.slice(1, epochStart)
+		.filter((message): message is System => message.role === "system");
+	if (!updates.some(hasText)) return undefined;
 
-	const head = getCurrentSystemMessage(prefix);
-	if (!head) return undefined;
-	return [
-		head as unknown as T,
-		...prefix.filter((message) => message.role !== "system"),
-		...messages.slice(epochStart),
-	];
+	const head = messages[0] as System;
+	const textOnly = [head, ...updates].map(({ toolsAdded: _a, toolsRemoved: _r, ...rest }) => rest);
+	const folded = getCurrentSystemMessage(textOnly);
+	const { sections: _sections, ...headRest } = head;
+	const newHead = {
+		...headRest,
+		content: folded?.content ?? "",
+		...(folded?.sections ? { sections: folded.sections } : {}),
+	} as System;
+
+	const out: T[] = [newHead];
+	for (const message of messages.slice(1, epochStart)) {
+		if (message.role !== "system" || !hasText(message as System)) {
+			out.push(message);
+			continue;
+		}
+		// Keep whatever else the update carries (tool deltas, future fields) in place.
+		const { role, content: _c, sections: _s, timestamp, ...rest } = message as System;
+		const meaningful = Object.values(rest).some(
+			(value) => value !== undefined && !(Array.isArray(value) && value.length === 0),
+		);
+		if (meaningful) out.push({ role, content: "", timestamp, ...rest } as System);
+	}
+	out.push(...messages.slice(epochStart));
+	return out;
 }
 
 function getPromptPath(provider: string): string {
@@ -155,7 +183,9 @@ export default function providerSystemPrompt(pi: ExtensionAPI) {
 	});
 
 	pi.on("context_with_system", async (event, ctx) => {
-		if (!ctx.model) return;
+		// A virtual (routed) selection names no physical model, so assistant messages
+		// can't tell us where its epoch starts; leave such requests to pi.
+		if (!ctx.model || ctx.model.api === "pi-virtual") return;
 		const messages = foldSystemMessagesBeforeModelEpoch(event.messages, ctx.model);
 		return messages ? { messages } : undefined;
 	});
