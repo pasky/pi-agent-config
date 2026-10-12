@@ -48,18 +48,27 @@ test("folds prompt text into the head after a model switch, keeping tool deltas 
 });
 
 test("drops text-only updates and keeps tool removals after the calls they follow", () => {
+	const call = { ...asst("openai-codex", "gpt"), content: [{ type: "toolCall", id: "c1", name: "old", arguments: {} }] };
 	const messages = [
-		sys({ preamble: "openai preamble" }, { toolsAdded: [tool("old")] }),
+		sys({ preamble: "openai preamble" }),
 		user("u1"),
-		asst("openai-codex", "gpt"),
+		sys({ cwd: "<cwd>/a</cwd>" }, { toolsAdded: [tool("old")] }),
+		call,
 		sys({}, { toolsRemoved: [{ name: "old" }] }),
 		sys({ preamble: "claude preamble" }),
 		user("u2"),
 	];
 	const out = fold(messages, CLAUDE);
-	assert.deepEqual(out[0].toolsAdded, [tool("old")]);
-	assert.equal(out[0].sections.preamble, "claude preamble");
-	assert.deepEqual(out.slice(1), [messages[1], messages[2], messages[3], messages[5]]);
+	assert.deepEqual(out[0].sections, { preamble: "claude preamble", cwd: "<cwd>/a</cwd>" });
+	assert.equal(out[0].toolsAdded, undefined);
+	// "old" is still declared right before the call to it and removed right after.
+	assert.deepEqual(out.slice(1), [
+		messages[1],
+		{ role: "system", content: "", timestamp: 1, toolsAdded: [tool("old")] },
+		call,
+		messages[4],
+		messages[6],
+	]);
 });
 
 test("head stays stable within the new model's epoch; later updates stay mid-conversation", () => {
