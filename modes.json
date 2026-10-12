@@ -24,7 +24,7 @@
     },
     "research": {
       "provider": "openai-codex",
-      "modelId": "gpt-5.6-luna",
+      "modelId": "gpt-6-luna",
       "thinkingLevel": "high"
     },
     "local": {
