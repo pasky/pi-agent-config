@@ -162,13 +162,15 @@ function isMeaningfulSystemMessage(message: SystemMessage): boolean {
  *
  * - the head's preamble becomes `preamble`, and later system messages lose their
  *   preamble updates (dropped when nothing else remains);
- * - tools/rules/docs are removed wherever they were set while pi's default preamble
- *   was in effect, i.e. while the preamble was not one of `providerPreambles`.
+ * - tools/rules/docs set while pi's default preamble was in effect are removed (or
+ *   become removals, where they replaced an extension's own section of that name).
+ *   pi's default preamble is recognised positively: it is set together with pi's own
+ *   docs section, which names pi's README.
  *
  * Only when the effective prompt is ours to manage: its preamble is one of
- * `providerPreambles`, or it has pi's default structure (tools, rules and docs all
- * present). Anything else is an explicit override (--system-prompt, SYSTEM.md, another
- * extension's customPrompt) and is left alone, as are opaque (forced) prompts.
+ * `providerPreambles` or pi's default. Anything else is an explicit override
+ * (--system-prompt, SYSTEM.md, another extension's customPrompt) and is left alone, as
+ * are opaque (forced) prompts.
  *
  * The result depends only on the transcript and the prompt files, so the head stays
  * stable across requests and its cache keeps hitting. Returns undefined when nothing
@@ -183,12 +185,30 @@ export function enforceProviderPreamble<T extends { role: string }>(
 	const head = messages[0] as System | undefined;
 	if (head?.role !== "system" || !head.sections || hasContentText(head)) return undefined;
 
-	const isProviderPreamble = (text: string | null | undefined) => typeof text === "string" && providerPreambles.has(text);
-	const effective = getCurrentSystemMessage(messages)?.sections ?? {};
-	const looksLikePiDefault = DEFAULT_ONLY_SECTIONS.every((name) => typeof effective[name] === "string");
-	if (!isProviderPreamble(effective[PREAMBLE_SECTION]) && !looksLikePiDefault) return undefined;
+	type Sections = Record<string, string | null>;
+	// pi's default preambles, recognised positively: the ones set together with pi's
+	// own docs section (which names pi's README). Neither an edited provider file nor
+	// another custom prompt is ever mistaken for pi's default.
+	const piDefaultPreambles = new Set<string>();
+	for (const message of messages) {
+		const sections = (message as System).sections;
+		if (message.role !== "system" || !sections) continue;
+		const { [PREAMBLE_SECTION]: preambleText, docs } = sections;
+		if (typeof preambleText === "string" && typeof docs === "string" && detectPiRoot(docs)) {
+			piDefaultPreambles.add(preambleText);
+		}
+	}
+	const isOurs = (text: string | null | undefined) =>
+		typeof text === "string" && (providerPreambles.has(text) || piDefaultPreambles.has(text));
+	if (!isOurs(getCurrentSystemMessage(messages)?.sections?.[PREAMBLE_SECTION])) return undefined;
+
+	const sameSections = (a: Sections, b: Sections) =>
+		Object.keys(a).length === Object.keys(b).length && Object.entries(a).every(([name, value]) => b[name] === value);
 
 	let inEffect: string | null | undefined;
+	// tools/rules/docs values we keep sending (extension-owned ones), so that a stripped
+	// pi default that replaced one becomes a removal instead of resurrecting it.
+	const keptDefaultNamed = new Set<string>();
 	let changed = false;
 	const out: T[] = [];
 	for (const [index, message] of messages.entries()) {
@@ -198,26 +218,34 @@ export function enforceProviderPreamble<T extends { role: string }>(
 			continue;
 		}
 		if (PREAMBLE_SECTION in system.sections) inEffect = system.sections[PREAMBLE_SECTION];
-		const piDefaultInEffect = !isProviderPreamble(inEffect);
-		const kept = Object.fromEntries(
-			Object.entries(system.sections).filter(
-				([name, value]) =>
-					name !== PREAMBLE_SECTION && !(piDefaultInEffect && value !== null && DEFAULT_ONLY_SECTIONS.includes(name)),
-			),
-		);
-		const removed = Object.keys(system.sections).length - Object.keys(kept).length;
+		const piDefaultInEffect = typeof inEffect === "string" && piDefaultPreambles.has(inEffect);
+		const original: Sections = { ...system.sections };
+		delete original[PREAMBLE_SECTION];
+		const sections: Sections = {};
+		for (const [name, value] of Object.entries(original)) {
+			if (DEFAULT_ONLY_SECTIONS.includes(name)) {
+				if (piDefaultInEffect && value !== null) {
+					// pi's default content: drop it, retracting a value we kept before.
+					if (keptDefaultNamed.delete(name)) sections[name] = null;
+					continue;
+				}
+				if (value === null) keptDefaultNamed.delete(name);
+				else keptDefaultNamed.add(name);
+			}
+			sections[name] = value;
+		}
 		if (index === 0) {
-			changed ||= system.sections[PREAMBLE_SECTION] !== preamble || removed > (PREAMBLE_SECTION in system.sections ? 1 : 0);
-			out.push({ ...system, sections: { [PREAMBLE_SECTION]: preamble, ...kept } });
+			changed ||= system.sections[PREAMBLE_SECTION] !== preamble || !sameSections(sections, original);
+			out.push({ ...system, sections: { [PREAMBLE_SECTION]: preamble, ...sections } });
 			continue;
 		}
-		if (removed === 0) {
+		if (sameSections(sections, system.sections)) {
 			out.push(message);
 			continue;
 		}
 		changed = true;
 		const { sections: _s, ...rest } = system;
-		const next = (Object.keys(kept).length > 0 ? { ...rest, sections: kept } : rest) as System;
+		const next = (Object.keys(sections).length > 0 ? { ...rest, sections } : rest) as System;
 		if (isMeaningfulSystemMessage(next)) out.push(next);
 	}
 	return changed ? out : undefined;

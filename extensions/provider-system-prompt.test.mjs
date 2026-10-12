@@ -1,11 +1,11 @@
 // Run: node --test extensions/provider-system-prompt.test.mjs
 import assert from "node:assert/strict";
 import { execSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { pathToFileURL } from "node:url";
 
 // Resolve dependencies from the installed pi, including the local shell wrapper.
@@ -26,6 +26,7 @@ mkdirSync(join(fakeHome, ".pi/agent/system-prompts"), { recursive: true });
 writeFileSync(join(fakeHome, ".pi/agent/system-prompts/anthropic.md"), "claude preamble, docs at @PIROOT@/docs\n");
 writeFileSync(join(fakeHome, ".pi/agent/system-prompts/openai-codex.md"), "openai preamble\n");
 process.env.HOME = fakeHome;
+after(() => rmSync(fakeHome, { recursive: true }));
 const jiti = createJiti(import.meta.url, {
 	alias: { "@earendil-works/pi-ai": piAi, "@earendil-works/pi-coding-agent": piCodingAgent },
 });
@@ -98,7 +99,8 @@ test("leaves single-model sessions untouched", () => {
 
 const DEFAULT_PREAMBLE = "You are an expert coding assistant operating inside pi.";
 const PROVIDERS = new Set(["claude preamble", "openai preamble"]);
-const DEFAULTS = { tools: "<tools/>", rules: "<rules/>", docs: "<docs/>" };
+const PI_DOCS = "<docs>\nPi documentation:\n- Main documentation: /pi/README.md\n</docs>";
+const DEFAULTS = { tools: "<tools/>", rules: "<rules/>", docs: PI_DOCS };
 const legacy = [
 	sys({ preamble: DEFAULT_PREAMBLE, ...DEFAULTS, project_context: "<pc/>", cwd: "<cwd/>" }),
 	user("u1"),
@@ -138,7 +140,31 @@ test("keeps an extension's own tools/rules/docs sections next to a provider prom
 	assert.equal(out[2], messages[2]);
 });
 
+test("retracts an extension's section that pi's default replaced, instead of resurrecting it", () => {
+	const messages = [
+		sys({ preamble: "claude preamble", rules: "<only for this run/>" }),
+		user("u"),
+		asst("anthropic", "opus"),
+		sys({ preamble: DEFAULT_PREAMBLE, ...DEFAULTS }),
+		user("u2"),
+	];
+	const out = enforce(messages, "claude preamble", PROVIDERS);
+	assert.deepEqual(out[0].sections, { preamble: "claude preamble", rules: "<only for this run/>" });
+	assert.deepEqual(out[3].sections, { rules: null });
+});
+
+test("an edited provider prompt is not mistaken for pi's default", () => {
+	// The session started with an older version of the prompt file, plus extension rules.
+	const messages = [sys({ preamble: "claude preamble v1", rules: "<ext rules/>" }), user("u"), sys({ preamble: "claude preamble" })];
+	const out = enforce(messages, "claude preamble", PROVIDERS);
+	assert.deepEqual(out[0].sections, { preamble: "claude preamble", rules: "<ext rules/>" });
+	assert.equal(out.length, 2);
+});
+
 test("leaves explicit overrides and opaque prompts alone", () => {
+	// An extension's own customPrompt with its own sections named like pi's default ones.
+	const explicit = [sys({ preamble: "EXPLICIT OVERRIDE", tools: "<t/>", rules: "<r/>", docs: "<d/>" }), user("u")];
+	assert.equal(enforce(explicit, "claude preamble", PROVIDERS), undefined);
 	// Another custom prompt (SYSTEM.md, --system-prompt, another extension's customPrompt).
 	const custom = [sys({ preamble: "my own prompt", cwd: "<cwd/>" }), user("u")];
 	assert.equal(enforce(custom, "claude preamble", PROVIDERS), undefined);
