@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { getCurrentSystemMessage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const PROMPT_DIR = join(homedir(), ".pi", "agent", "system-prompts");
@@ -54,6 +55,53 @@ function detectPiRoot(promptHead: string): string | undefined {
 	return promptHead.match(/^- Main documentation: (.+)[/\\]README\.md$/m)?.[1];
 }
 
+/**
+ * Fold system prompt updates made before the current model's epoch into the leading
+ * system message.
+ *
+ * pi appends prompt changes (e.g. our provider preamble after a model switch) as
+ * mid-conversation system messages so the cached request prefix survives. A model
+ * switch already invalidates the provider's prompt cache, though, so there is nothing
+ * to preserve: the new model should see its own prompt at the head, not the previous
+ * provider's prompt followed by an "Updated system prompt section" note.
+ *
+ * The epoch is the trailing run of assistant messages produced by the current model
+ * (provider + model id); if the last assistant message came from another model, the
+ * epoch has not started yet and every system message is folded. Everything before
+ * the epoch start is replayed with pi-ai's own getCurrentSystemMessage (the same
+ * semantics providers use to collapse system messages), so the folded head is stable
+ * across the epoch's requests and its cache keeps hitting, while updates made later
+ * within the epoch stay mid-conversation as pi intends.
+ *
+ * Returns undefined when there is nothing to fold.
+ */
+export function foldSystemMessagesBeforeModelEpoch<T extends { role: string }>(
+	messages: readonly T[],
+	model: { provider: string; id: string },
+): T[] | undefined {
+	// pi always leads with the system message; leave anything unexpected untouched.
+	if (messages[0]?.role !== "system") return undefined;
+
+	let epochStart = messages.length;
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const message = messages[i] as { role: string; provider?: unknown; model?: unknown };
+		if (message.role !== "assistant") continue;
+		if (message.provider !== model.provider || message.model !== model.id) break;
+		epochStart = i;
+	}
+
+	const prefix = messages.slice(0, epochStart);
+	if (prefix.filter((message) => message.role === "system").length < 2) return undefined;
+
+	const head = getCurrentSystemMessage(prefix);
+	if (!head) return undefined;
+	return [
+		head as unknown as T,
+		...prefix.filter((message) => message.role !== "system"),
+		...messages.slice(epochStart),
+	];
+}
+
 function getPromptPath(provider: string): string {
 	return join(PROMPT_DIR, `${provider}.md`);
 }
@@ -104,6 +152,12 @@ export default function providerSystemPrompt(pi: ExtensionAPI) {
 
 	pi.on("model_select", async (event, ctx) => {
 		updateStatus(ctx, event.model.provider);
+	});
+
+	pi.on("context_with_system", async (event, ctx) => {
+		if (!ctx.model) return;
+		const messages = foldSystemMessagesBeforeModelEpoch(event.messages, ctx.model);
+		return messages ? { messages } : undefined;
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
