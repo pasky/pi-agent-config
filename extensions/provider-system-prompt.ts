@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { getCurrentSystemMessage, type SystemMessage } from "@earendil-works/pi-ai";
@@ -8,7 +8,7 @@ const PROMPT_DIR = join(homedir(), ".pi", "agent", "system-prompts");
 
 // Everything from the first of these markers on is kept (the "tail"); the part
 // before it is the "head" that a provider prompt replaces. Only used by the
-// bootstrap command and to recognise pi's default prompt: the prompt itself is applied
+// bootstrap command and for @PIROOT@ detection there: the prompt itself is applied
 // through systemPromptOptions.customPrompt, so pi renders the tail sections.
 const TAIL_MARKERS = [
 	// pi >=0.87 renders structured sections as <name>...</name> blocks; the ones
@@ -129,11 +129,11 @@ export function foldSystemMessagesBeforeModelEpoch<T extends { role: string }>(
 }
 
 // pi's section holding the custom prompt (or its default preamble), and the sections
-// pi renders only for its default prompt, i.e. without a customPrompt (see
-// buildSystemPromptSections in pi's system-prompt.ts).
+// pi renders for its default prompt only, i.e. without a customPrompt (see
+// buildSystemPromptSections in pi's system-prompt.ts). Extensions may add sections of
+// the same names next to a custom prompt; those are theirs and are kept.
 const PREAMBLE_SECTION = "preamble";
 const DEFAULT_ONLY_SECTIONS = ["tools", "rules", "docs"];
-const PROVIDER_OWNED_SECTIONS = [PREAMBLE_SECTION, ...DEFAULT_ONLY_SECTIONS];
 
 function hasContentText(message: SystemMessage): boolean {
 	return message.content.length > 0;
@@ -158,38 +158,65 @@ function isMeaningfulSystemMessage(message: SystemMessage): boolean {
  * (default preamble plus <tools>/<rules>/<docs>). Sessions created before a provider
  * prompt existed also lead with the default prompt. Anthropic's subscription endpoint
  * rejects requests led by pi's default prompt (400 "Third-party apps now draw from your
- * extra usage"), so at request time the head gets the provider preamble and loses the
- * default-only sections, and later system messages lose those sections too (dropped
- * when nothing else remains). The result depends only on the transcript and the
- * prompt file, so the head stays stable across requests and its cache keeps hitting.
+ * extra usage"), so at request time:
  *
- * Heads whose prompt is opaque content (a forced prompt) are left alone. Returns
- * undefined when nothing changes.
+ * - the head's preamble becomes `preamble`, and later system messages lose their
+ *   preamble updates (dropped when nothing else remains);
+ * - tools/rules/docs are removed wherever they were set while pi's default preamble
+ *   was in effect, i.e. while the preamble was not one of `providerPreambles`.
+ *
+ * Only when the effective prompt is ours to manage: its preamble is one of
+ * `providerPreambles`, or it has pi's default structure (tools, rules and docs all
+ * present). Anything else is an explicit override (--system-prompt, SYSTEM.md, another
+ * extension's customPrompt) and is left alone, as are opaque (forced) prompts.
+ *
+ * The result depends only on the transcript and the prompt files, so the head stays
+ * stable across requests and its cache keeps hitting. Returns undefined when nothing
+ * changes.
  */
 export function enforceProviderPreamble<T extends { role: string }>(
 	messages: readonly T[],
 	preamble: string,
+	providerPreambles: ReadonlySet<string>,
 ): T[] | undefined {
 	type System = SystemMessage & T;
 	const head = messages[0] as System | undefined;
 	if (head?.role !== "system" || !head.sections || hasContentText(head)) return undefined;
 
-	const owns = (sections: SystemMessage["sections"]) =>
-		Object.keys(sections ?? {}).some((name) => PROVIDER_OWNED_SECTIONS.includes(name));
-	const strip = (sections: SystemMessage["sections"]) =>
-		Object.fromEntries(Object.entries(sections ?? {}).filter(([name]) => !PROVIDER_OWNED_SECTIONS.includes(name)));
+	const isProviderPreamble = (text: string | null | undefined) => typeof text === "string" && providerPreambles.has(text);
+	const effective = getCurrentSystemMessage(messages)?.sections ?? {};
+	const looksLikePiDefault = DEFAULT_ONLY_SECTIONS.every((name) => typeof effective[name] === "string");
+	if (!isProviderPreamble(effective[PREAMBLE_SECTION]) && !looksLikePiDefault) return undefined;
 
-	let changed = head.sections[PREAMBLE_SECTION] !== preamble || DEFAULT_ONLY_SECTIONS.some((name) => name in head.sections!);
-	const out: T[] = [{ ...head, sections: { [PREAMBLE_SECTION]: preamble, ...strip(head.sections) } } as System];
-	for (const message of messages.slice(1)) {
+	let inEffect: string | null | undefined;
+	let changed = false;
+	const out: T[] = [];
+	for (const [index, message] of messages.entries()) {
 		const system = message as System;
-		if (message.role !== "system" || !owns(system.sections)) {
+		if (message.role !== "system" || !system.sections) {
+			out.push(message);
+			continue;
+		}
+		if (PREAMBLE_SECTION in system.sections) inEffect = system.sections[PREAMBLE_SECTION];
+		const piDefaultInEffect = !isProviderPreamble(inEffect);
+		const kept = Object.fromEntries(
+			Object.entries(system.sections).filter(
+				([name, value]) =>
+					name !== PREAMBLE_SECTION && !(piDefaultInEffect && value !== null && DEFAULT_ONLY_SECTIONS.includes(name)),
+			),
+		);
+		const removed = Object.keys(system.sections).length - Object.keys(kept).length;
+		if (index === 0) {
+			changed ||= system.sections[PREAMBLE_SECTION] !== preamble || removed > (PREAMBLE_SECTION in system.sections ? 1 : 0);
+			out.push({ ...system, sections: { [PREAMBLE_SECTION]: preamble, ...kept } });
+			continue;
+		}
+		if (removed === 0) {
 			out.push(message);
 			continue;
 		}
 		changed = true;
-		const { sections, ...rest } = system;
-		const kept = strip(sections);
+		const { sections: _s, ...rest } = system;
 		const next = (Object.keys(kept).length > 0 ? { ...rest, sections: kept } : rest) as System;
 		if (isMeaningfulSystemMessage(next)) out.push(next);
 	}
@@ -201,14 +228,20 @@ function getPromptPath(provider: string): string {
 }
 
 /**
- * The provider's custom preamble from ~/.pi/agent/system-prompts/<provider>.md, with
+ * Every provider's custom preamble from ~/.pi/agent/system-prompts/<provider>.md, with
  * @PIROOT@ expanded to the pi package root (the directory of pi's README, exactly as
- * pi's default docs section names it). Undefined when the provider has no prompt file.
+ * pi's default docs section names it).
  */
-function resolveProviderPreamble(provider: string): string | undefined {
-	const path = getPromptPath(provider);
-	if (!existsSync(path)) return undefined;
-	return readFileSync(path, "utf8").trimEnd().replaceAll("@PIROOT@", dirname(getReadmePath()));
+function resolveProviderPreambles(): Map<string, string> {
+	const preambles = new Map<string, string>();
+	if (!existsSync(PROMPT_DIR)) return preambles;
+	const piRoot = dirname(getReadmePath());
+	for (const file of readdirSync(PROMPT_DIR)) {
+		if (!file.endsWith(".md")) continue;
+		const text = readFileSync(join(PROMPT_DIR, file), "utf8").trimEnd().replaceAll("@PIROOT@", piRoot);
+		preambles.set(file.slice(0, -".md".length), text);
+	}
+	return preambles;
 }
 
 function updateStatus(ctx: ExtensionContext, provider: string | undefined) {
@@ -259,21 +292,17 @@ export default function providerSystemPrompt(pi: ExtensionAPI) {
 		updateStatus(ctx, event.model.provider);
 	});
 
-	// Whether the user set an explicit prompt override (--system-prompt, .pi/SYSTEM.md,
-	// ~/.pi/agent/SYSTEM.md, custom prompt templates), which this extension yields to.
-	// Learned from before_agent_start; before the first prompt of this process, inferred
-	// from the base prompt: pi's default rendering carries the docs section.
-	let explicitOverride: boolean | undefined;
-
 	pi.on("context_with_system", async (event, ctx) => {
 		// A virtual (routed) selection names no physical model, so assistant messages
 		// can't tell us where its epoch starts; leave such requests to pi.
 		if (!ctx.model || ctx.model.api === "pi-virtual") return;
 		let messages = foldSystemMessagesBeforeModelEpoch(event.messages, ctx.model) ?? event.messages;
 
-		const override = explicitOverride ?? !detectPiRoot(splitSystemPrompt(ctx.getSystemPrompt()).head);
-		const preamble = override ? undefined : resolveProviderPreamble(ctx.model.provider);
-		if (preamble) messages = enforceProviderPreamble(messages, preamble) ?? messages;
+		const preambles = resolveProviderPreambles();
+		const preamble = preambles.get(ctx.model.provider);
+		if (preamble !== undefined) {
+			messages = enforceProviderPreamble(messages, preamble, new Set(preambles.values())) ?? messages;
+		}
 
 		return messages !== event.messages ? { messages } : undefined;
 	});
@@ -282,12 +311,12 @@ export default function providerSystemPrompt(pi: ExtensionAPI) {
 		const provider = ctx.model?.provider;
 		if (!provider) return;
 
-		// Yield to an explicit user prompt override. Otherwise this extension would
-		// silently clobber the very prompt the user asked for.
-		explicitOverride = !!event.systemPromptOptions?.customPrompt;
-		if (explicitOverride) return;
+		// Yield to an explicit user prompt override (--system-prompt, .pi/SYSTEM.md,
+		// ~/.pi/agent/SYSTEM.md, custom prompt templates). Otherwise this extension
+		// would silently clobber the very prompt the user asked for.
+		if (event.systemPromptOptions?.customPrompt) return;
 
-		const customHead = resolveProviderPreamble(provider);
+		const customHead = resolveProviderPreambles().get(provider);
 		if (customHead === undefined) return;
 		// Swap in the provider prompt as pi's custom preamble instead of returning
 		// a whole systemPrompt string: pi then still renders the addendum
