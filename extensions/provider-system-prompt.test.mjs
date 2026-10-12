@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { execSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
@@ -17,8 +18,12 @@ const piAiDir = require.resolve.paths("@earendil-works/pi-ai")
 	.map((dir) => join(dir, "@earendil-works/pi-ai"))
 	.find((dir) => existsSync(dir));
 const piAi = pathToFileURL(join(piAiDir, "dist/compat.js")).href;
-const jiti = createJiti(import.meta.url, { alias: { "@earendil-works/pi-ai": piAi } });
-const { default: extension, foldSystemMessagesBeforeModelEpoch: fold } = await jiti.import(
+// And @earendil-works/pi-coding-agent as the installed pi itself (cli.js sits next to index.js).
+const piCodingAgent = pathToFileURL(join(dirname(cli), "index.js")).href;
+const jiti = createJiti(import.meta.url, {
+	alias: { "@earendil-works/pi-ai": piAi, "@earendil-works/pi-coding-agent": piCodingAgent },
+});
+const { default: extension, foldSystemMessagesBeforeModelEpoch: fold, enforceProviderPreamble: enforce } = await jiti.import(
 	new URL("./provider-system-prompt.ts", import.meta.url).pathname,
 );
 const { getCurrentSystemPrompt, getCurrentTools } = await import(piAi);
@@ -85,11 +90,54 @@ test("leaves single-model sessions untouched", () => {
 	assert.equal(fold(messages, CLAUDE), undefined);
 });
 
-test("context_with_system hook applies the fold for the session model", async () => {
+const DEFAULT_PREAMBLE = "You are an expert coding assistant operating inside pi.";
+const legacy = [
+	sys({ preamble: DEFAULT_PREAMBLE, tools: "<tools/>", rules: "<rules/>", docs: "<docs/>", project_context: "<pc/>", cwd: "<cwd/>" }),
+	user("u1"),
+	asst("anthropic", "opus"),
+	// pi's between-turn refresh in an extension-triggered run: back to its default prompt.
+	sys({ preamble: DEFAULT_PREAMBLE, tools: "<tools/>", rules: "<rules/>", docs: "<docs/>", mood_indicator: null }),
+	asst("anthropic", "opus"),
+	sys({ preamble: DEFAULT_PREAMBLE, tools: "<tools/>" }, { toolsAdded: [tool("mcp")] }),
+	sys({ preamble: DEFAULT_PREAMBLE, docs: "<docs/>" }),
+	sys({ skills: "<skills/>" }),
+	user("u2"),
+];
+
+test("enforces the provider preamble at the head and strips pi's default-only sections", () => {
+	const out = enforce(legacy, "claude preamble");
+	assert.deepEqual(out[0].sections, { preamble: "claude preamble", project_context: "<pc/>", cwd: "<cwd/>" });
+	assert.deepEqual(Object.keys(out[0].sections), ["preamble", "project_context", "cwd"]);
+	assert.deepEqual(out.slice(1), [
+		legacy[1],
+		legacy[2],
+		{ role: "system", content: "", timestamp: 1, sections: { mood_indicator: null } },
+		legacy[4],
+		{ role: "system", content: "", timestamp: 1, toolsAdded: [tool("mcp")] },
+		legacy[7],
+		legacy[8],
+	]);
+	// Stable: enforcing again changes nothing, so the head (and its cache) stays put.
+	assert.equal(enforce(out, "claude preamble"), undefined);
+});
+
+test("leaves opaque (forced) prompts alone", () => {
+	assert.equal(enforce([{ role: "system", content: "forced prompt", timestamp: 1 }, user("u")], "p"), undefined);
+});
+
+test("context_with_system hook folds, then enforces the provider prompt file", async () => {
 	const handlers = new Map();
 	extension({ on: (name, fn) => handlers.set(name, fn), registerCommand: () => {} });
 	const hook = handlers.get("context_with_system");
-	assert.equal((await hook({ messages: switched }, { model: CLAUDE })).messages[0].sections.preamble, "claude preamble");
+	const defaultPrompt = () => "You are an expert coding assistant operating inside pi.\n\n<docs>\n- Main documentation: /x/README.md\n</docs>";
+	const providerFile = readFileSync(join(homedir(), ".pi/agent/system-prompts/anthropic.md"), "utf8");
+	const head = (await hook({ messages: legacy }, { model: CLAUDE, getSystemPrompt: defaultPrompt })).messages[0];
+	assert.ok(head.sections.preamble.startsWith(providerFile.split("\n")[0]));
+	assert.equal(head.sections.docs, undefined);
+	// An explicit prompt override (pi's base prompt lacks the default docs section): fold only.
+	const overridden = { model: CLAUDE, getSystemPrompt: () => "custom system prompt" };
+	assert.equal((await hook({ messages: switched }, overridden)).messages[0].sections.preamble, "claude preamble");
+	assert.equal(await hook({ messages: legacy }, overridden), undefined);
 	assert.equal(await hook({ messages: switched }, { model: undefined }), undefined);
 	// Virtual selections route per request, so the epoch can't be derived from them.
 	assert.equal(await hook({ messages: switched }, { model: { provider: "anthropic", id: "auto", api: "pi-virtual" } }), undefined);
