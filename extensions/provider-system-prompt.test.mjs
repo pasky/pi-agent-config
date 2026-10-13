@@ -24,13 +24,12 @@ const piCodingAgent = pathToFileURL(join(dirname(cli), "index.js")).href;
 const fakeHome = mkdtempSync(join(tmpdir(), "psp-test-"));
 mkdirSync(join(fakeHome, ".pi/agent/system-prompts"), { recursive: true });
 writeFileSync(join(fakeHome, ".pi/agent/system-prompts/anthropic.md"), "claude preamble, docs at @PIROOT@/docs\n");
-writeFileSync(join(fakeHome, ".pi/agent/system-prompts/openai-codex.md"), "openai preamble\n");
 process.env.HOME = fakeHome;
 after(() => rmSync(fakeHome, { recursive: true }));
 const jiti = createJiti(import.meta.url, {
 	alias: { "@earendil-works/pi-ai": piAi, "@earendil-works/pi-coding-agent": piCodingAgent },
 });
-const { default: extension, foldSystemMessagesBeforeModelEpoch: fold, enforceProviderPreamble: enforce } = await jiti.import(
+const { default: extension, foldSystemPromptUpdates: fold } = await jiti.import(
 	new URL("./provider-system-prompt.ts", import.meta.url).pathname,
 );
 const { getCurrentSystemPrompt, getCurrentTools } = await import(piAi);
@@ -97,103 +96,53 @@ test("leaves single-model sessions untouched", () => {
 	assert.equal(fold(messages, CLAUDE), undefined);
 });
 
-const DEFAULT_PREAMBLE = "You are an expert coding assistant operating inside pi.";
-const PROVIDERS = new Set(["claude preamble", "openai preamble"]);
-const PI_DOCS = "<docs>\nPi documentation:\n- Main documentation: /pi/README.md\n</docs>";
-const DEFAULTS = { tools: "<tools/>", rules: "<rules/>", docs: PI_DOCS };
+const DEFAULTS = { tools: "<tools/>", rules: "<rules/>", docs: "<docs/>" };
+// A session created before the provider prompt applied: pi's default prompt leads.
 const legacy = [
-	sys({ preamble: DEFAULT_PREAMBLE, ...DEFAULTS, project_context: "<pc/>", cwd: "<cwd/>" }),
+	sys({ preamble: "pi default preamble", ...DEFAULTS, project_context: "<pc/>", cwd: "<cwd/>" }),
 	user("u1"),
 	asst("anthropic", "opus"),
+	asst("anthropic", "opus"),
+	// The provider prompt applied by before_agent_start, recorded as an update.
 	sys({ preamble: "claude preamble", tools: null, rules: null, docs: null, mood_indicator: "<mood/>" }),
-	asst("anthropic", "opus"),
-	// pi's between-turn refresh in an extension-triggered run: back to its default prompt.
-	sys({ preamble: DEFAULT_PREAMBLE, ...DEFAULTS, mood_indicator: null }, { toolsAdded: [tool("mcp")] }),
-	asst("anthropic", "opus"),
-	sys({ tools: "<tools2/>" }),
-	sys({ skills: "<skills/>" }),
 	user("u2"),
 ];
 
-test("enforces the provider preamble at the head and strips pi's default-only sections", () => {
-	const out = enforce(legacy, "claude preamble", PROVIDERS);
-	assert.deepEqual(Object.entries(out[0].sections), [["preamble", "claude preamble"], ["project_context", "<pc/>"], ["cwd", "<cwd/>"]]);
-	assert.deepEqual(out.slice(1), [
-		legacy[1],
-		legacy[2],
-		{ role: "system", content: "", timestamp: 1, sections: { tools: null, rules: null, docs: null, mood_indicator: "<mood/>" } },
-		legacy[4],
-		{ role: "system", content: "", timestamp: 1, sections: { mood_indicator: null }, toolsAdded: [tool("mcp")] },
-		legacy[6],
-		legacy[8],
-		legacy[9],
+test("folds a preamble change into the head even within the model's epoch", () => {
+	const out = fold(legacy, CLAUDE);
+	assert.deepEqual(Object.entries(out[0].sections), [
+		["preamble", "claude preamble"],
+		["project_context", "<pc/>"],
+		["cwd", "<cwd/>"],
+		["mood_indicator", "<mood/>"],
 	]);
-	// Stable: enforcing again changes nothing, so the head (and its cache) stays put.
-	assert.equal(enforce(out, "claude preamble", PROVIDERS), undefined);
-	assert.deepEqual(enforce([...legacy, asst("anthropic", "opus"), sys({ cwd: "<cwd2/>" })], "claude preamble", PROVIDERS)[0], out[0]);
+	assert.deepEqual(out.slice(1), legacy.filter((m) => m.role !== "system"));
+	// Stable: a later in-epoch update stays mid-conversation and the head is unchanged.
+	const later = sys({ cwd: "<cwd2/>" });
+	const next = fold([...legacy, asst("anthropic", "opus"), later, user("u3")], CLAUDE);
+	assert.deepEqual(next[0], out[0]);
+	assert.equal(next.at(-2), later);
 });
 
-test("keeps an extension's own tools/rules/docs sections next to a provider prompt", () => {
-	const messages = [sys({ preamble: "openai preamble", rules: "<ext rules/>" }), user("u"), sys({ docs: "<ext docs/>" })];
-	const out = enforce(messages, "claude preamble", PROVIDERS);
-	assert.deepEqual(out[0].sections, { preamble: "claude preamble", rules: "<ext rules/>" });
-	assert.equal(out[2], messages[2]);
-});
-
-test("retracts an extension's section that pi's default replaced, instead of resurrecting it", () => {
-	const messages = [
-		sys({ preamble: "claude preamble", rules: "<only for this run/>" }),
-		user("u"),
-		asst("anthropic", "opus"),
-		sys({ preamble: DEFAULT_PREAMBLE, ...DEFAULTS }),
-		user("u2"),
-	];
-	const out = enforce(messages, "claude preamble", PROVIDERS);
-	assert.deepEqual(out[0].sections, { preamble: "claude preamble", rules: "<only for this run/>" });
-	assert.deepEqual(out[3].sections, { rules: null });
-});
-
-test("an edited provider prompt is not mistaken for pi's default", () => {
-	// The session started with an older version of the prompt file, plus extension rules.
-	const messages = [sys({ preamble: "claude preamble v1", rules: "<ext rules/>" }), user("u"), sys({ preamble: "claude preamble" })];
-	const out = enforce(messages, "claude preamble", PROVIDERS);
-	assert.deepEqual(out[0].sections, { preamble: "claude preamble", rules: "<ext rules/>" });
-	assert.equal(out.length, 2);
-});
-
-test("leaves explicit overrides and opaque prompts alone", () => {
-	// An extension's own customPrompt with its own sections named like pi's default ones.
-	const explicit = [sys({ preamble: "EXPLICIT OVERRIDE", tools: "<t/>", rules: "<r/>", docs: "<d/>" }), user("u")];
-	assert.equal(enforce(explicit, "claude preamble", PROVIDERS), undefined);
-	// Another custom prompt (SYSTEM.md, --system-prompt, another extension's customPrompt).
-	const custom = [sys({ preamble: "my own prompt", cwd: "<cwd/>" }), user("u")];
-	assert.equal(enforce(custom, "claude preamble", PROVIDERS), undefined);
-	// ...even when copied from pi's default preamble text.
-	assert.equal(enforce([sys({ preamble: DEFAULT_PREAMBLE, docs: "<docs/>" }), user("u")], "claude preamble", PROVIDERS), undefined);
-	assert.equal(enforce([{ role: "system", content: "forced prompt", timestamp: 1 }, user("u")], "p", PROVIDERS), undefined);
-});
-
-test("context_with_system hook folds, then enforces the provider prompt file", async () => {
+test("context_with_system hook folds for the session model; virtual selections fold preamble changes only", async () => {
 	const handlers = new Map();
 	extension({ on: (name, fn) => handlers.set(name, fn), registerCommand: () => {} });
 	const hook = handlers.get("context_with_system");
-	const head = (await hook({ messages: legacy }, { model: CLAUDE })).messages[0];
-	const piRoot = dirname((await jiti.import("@earendil-works/pi-coding-agent")).getReadmePath());
-	assert.equal(head.sections.preamble, `claude preamble, docs at ${piRoot}/docs`);
-	assert.equal(head.sections.docs, undefined);
-	assert.equal(await hook({ messages: switched }, { model: undefined }), undefined);
-	// Virtual selections route per request, so the epoch can't be derived from them.
-	assert.equal(await hook({ messages: switched }, { model: { provider: "anthropic", id: "auto", api: "pi-virtual" } }), undefined);
+	assert.equal((await hook({ messages: switched }, { model: CLAUDE })).messages[0].sections.preamble, "claude preamble");
+	assert.equal((await hook({ messages: legacy }, { model: undefined })).messages[0].sections.preamble, "claude preamble");
+	const routed = [...switched.slice(0, 3), sys({ cwd: "<cwd/b>" }), user("u2")];
+	assert.equal(await hook({ messages: routed }, { model: { provider: "anthropic", id: "auto", api: "pi-virtual" } }), undefined);
 });
 
-test("before_agent_start applies the provider prompt unless one is already set", async () => {
+test("before_agent_start applies the provider prompt file unless a prompt is already set", async () => {
 	const handlers = new Map();
 	extension({ on: (name, fn) => handlers.set(name, fn), registerCommand: () => {} });
 	const hook = handlers.get("before_agent_start");
 	const event = (customPrompt) => ({ systemPrompt: "", systemPromptOptions: { customPrompt } });
 	const applied = event(undefined);
-	await hook(applied, { model: { provider: "openai-codex" } });
-	assert.equal(applied.systemPromptOptions.customPrompt, "openai preamble");
+	await hook(applied, { model: { provider: "anthropic" } });
+	const piRoot = dirname((await jiti.import("@earendil-works/pi-coding-agent")).getReadmePath());
+	assert.equal(applied.systemPromptOptions.customPrompt, `claude preamble, docs at ${piRoot}/docs`);
 	const overridden = event("explicit");
 	await hook(overridden, { model: { provider: "openai-codex" } });
 	assert.equal(overridden.systemPromptOptions.customPrompt, "explicit");
