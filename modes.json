@@ -17,6 +17,11 @@
       "modelId": "gpt-6-astra",
       "thinkingLevel": "high"
     },
+    "oracle": {
+      "provider": "openrouter",
+      "modelId": "google/gemini-4-argon",
+      "thinkingLevel": "high"
+    },
     "unchained": {
       "provider": "openrouter",
       "modelId": "moonshotai/kimi-k3",

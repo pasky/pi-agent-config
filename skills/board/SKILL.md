@@ -20,11 +20,12 @@ Write a short charter to `BOARD/charter.md`:
   - *decide* ("A or B or…?") — items are options, incl. ones nobody asked about
   - *diagnose* ("why does X happen?") — items are hypotheses, always incl. "the framing is wrong"; plus discriminating experiments
   - *estimate* ("how much / how likely?") — items are numbers with reasoning
-- **Seats** — the roster below, unless the user names seats. Pass each to
-  `agent-start` as `model: "<provider>/<modelId>:<thinkingLevel>"`.
+- **Seats** — the roster below, unless the user names seats. Roster entries
+  are modes from `~/.pi/agent/modes.json`; pass each to `agent-start` as
+  `model: "<provider>/<modelId>:<thinkingLevel>"`, seat name = mode name.
 
-  **Current roster:** `anthropic/claude-fable-5-1:high`,
-  `openai-codex/gpt-6-astra:high`.
+  **Current roster:** `best` (Fable), `deep` (GPT Astra), `oracle` (Gemini
+  Argon).
 
   Roster principle (for when the user asks to revise it): one seat per
   frontier lab with genuinely different training. Never two seats from the
@@ -39,7 +40,7 @@ answer different questions. Otherwise go.
 
 - `BOARD=~/.pi/boards/<YYYYMMDD>-<slug>/` — absolute path, outside any worktree.
 - Seats are side agents: `agent-start` with `model` set, `branchHint`
-  `board-<slug>-<lab>`. Kickoff = charter + the seat rules below + phase 1.
+  `board-<slug>-<seat>`. Kickoff = charter + the seat rules below + phase 1.
 - Barrier: call `agent-wait-any` on the not-yet-done seats until every seat
   is `waiting_user` and its file for the current phase/round exists. Never
   start the next round early.
@@ -50,7 +51,7 @@ answer different questions. Otherwise go.
 
 Seat rules (include in every kickoff):
 
-> You are seat `<lab>` on an advisory board of models from different labs.
+> You are seat `<seat>` on an advisory board of models from different labs.
 > Discussion only: never commit, merge, or edit the project — except
 > throwaway experiments in your own worktree when a phase asks for evidence.
 > Write only to the file you are told to, under `BOARD`. Do not read other
