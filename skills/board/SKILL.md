@@ -58,9 +58,8 @@ answer different questions. Otherwise go.
   seats and say so in the memo.
 - End: `agent-send` `/quit` to each seat (nothing to merge).
 - If side agents are unavailable (no tmux/git), run each seat as a separate
-  `subagent` call with `mode: "<mode>"`, passing its own earlier files. Verify
-  the model actually ran: `grep model_change` in the returned session file
-  (an unresolvable mode silently falls back to your model).
+  `subagent` call with `mode: "<mode>"`, passing its own earlier files. If the
+  result starts with `⚠ ignored`, that seat ran on your model — drop it.
 
 Seat rules (include in every kickoff):
 
