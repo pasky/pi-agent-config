@@ -49,8 +49,7 @@ answer different questions. Otherwise go: start the chair with `agent-start`
 description "You are the chair of the board in `<BOARD>`: read
 `~/.pi/agent/skills/board/SKILL.md` and run §2–§5. Don't ask the user
 anything; stop when `memo.md` is written." Then end your turn — don't block
-on it; you'll be notified when the chair goes idle. (No tmux/git: chair it
-yourself.)
+on it; you'll be notified when the chair goes idle.
 
 ## 2. Mechanics (chair)
 
@@ -70,9 +69,8 @@ yourself.)
   needs it.
 - End: `agent-send` `/quit` to each seat (nothing to merge) once the memo is
   written.
-- If side agents are unavailable (no tmux/git), run each seat as a separate
-  `subagent` call with `mode: "<mode>"`, passing its own earlier files (an
-  unresolvable mode makes the call fail — drop that seat).
+- Subagents are not a proper substitute for side agents (chair or seats):
+  they're one-shot, so a seat can't carry its own reasoning across rounds.
 
 Seat rules (include in every kickoff):
 
