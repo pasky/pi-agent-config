@@ -71,8 +71,8 @@ yourself.)
 - End: `agent-send` `/quit` to each seat (nothing to merge) once the memo is
   written.
 - If side agents are unavailable (no tmux/git), run each seat as a separate
-  `subagent` call with `mode: "<mode>"`, passing its own earlier files. If the
-  result starts with `⚠ ignored`, that seat ran on your model — drop it.
+  `subagent` call with `mode: "<mode>"`, passing its own earlier files (an
+  unresolvable mode makes the call fail — drop that seat).
 
 Seat rules (include in every kickoff):
 
