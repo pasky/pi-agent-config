@@ -6,9 +6,13 @@ description: Convene a board of frontier models from different labs that work a 
 # Board
 
 Models from different labs have different blind spots; their disagreement is
-information. You (the orchestrator) run the board: pick everything yourself,
-run the phases, apply the rules mechanically, deliver a memo. Do not have
-opinions on the merits — report what survived.
+information. Two roles, neither has opinions on the merits:
+
+- **Convener** — the session the user asked (you, unless you were started as
+  chair). Does §1, hands off to a chair, then §6. It holds the user's context;
+  everything in between is mechanical.
+- **Chair** — a side agent that runs §2–§5 (seats, rounds, memo), applying
+  the rules mechanically and reporting what survived.
 
 ## 1. Convene (decide alone, don't ask)
 
@@ -40,9 +44,15 @@ Write a short charter to `BOARD/charter.md`:
   contain only committed HEAD — no uncommitted files, empty submodules).
 
 Only ask the user if the question itself is ambiguous enough that seats would
-answer different questions. Otherwise go.
+answer different questions. Otherwise go: start the chair with `agent-start`
+(no `model` — it runs your mode; `branchHint` `board-chair-<word>`) and the
+description "You are the chair of the board in `<BOARD>`: read
+`~/.pi/agent/skills/board/SKILL.md` and run §2–§5. Don't ask the user
+anything; stop when `memo.md` is written." Then end your turn — don't block
+on it; you'll be notified when the chair goes idle. (No tmux/git: chair it
+yourself.)
 
-## 2. Mechanics
+## 2. Mechanics (chair)
 
 - `BOARD=~/.pi/boards/<YYYYMMDD>-<slug>/` — absolute, outside any worktree;
   add a suffix if it already exists.
@@ -56,7 +66,10 @@ answer different questions. Otherwise go.
   exists may still be rewritten — idle status is the signal), then check its
   output file. Missing → one nudge. `failed`/`crashed` → continue with ≥2
   seats and say so in the memo.
-- End: `agent-send` `/quit` to each seat (nothing to merge).
+- Read seats' Position blocks by default; open full posts only where a crux
+  needs it.
+- End: `agent-send` `/quit` to each seat (nothing to merge) once the memo is
+  written.
 - If side agents are unavailable (no tmux/git), run each seat as a separate
   `subagent` call with `mode: "<mode>"`, passing its own earlier files. If the
   result starts with `⚠ ignored`, that seat ran on your model — drop it.
@@ -138,7 +151,7 @@ for it.
    presented side by side with the seats' own "if X → A, if Y → B" conditions.
    Never merge them into a compromise.
 
-## 5. Memo → `BOARD/memo.md`, then summarize it to the user
+## 5. Memo → `BOARD/memo.md` (chair), then stop
 
 - **Bottom line** — the finalists (slate and/or forks): who championed each,
   the seat's verbatim pitch, its downside, its tags. No "safe pick" labels —
@@ -150,3 +163,9 @@ for it.
 - **Dissent** — the strongest unresolved objection, in its author's words.
 - **Next step** — the cheapest experiment, usually a champion's
   drop-condition.
+
+## 6. Deliver (convener)
+
+When notified that the chair is idle: read `memo.md` (not the rounds),
+spot-check the decisive factual claims of the finalists yourself, summarize
+the memo to the user, then `agent-send` `/quit` to the chair.
