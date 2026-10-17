@@ -81,8 +81,9 @@ Seat rules (include in every kickoff):
 > project files via the absolute paths in `BOARD/context.md`. Write only the
 > file you are told to, under `BOARD`. Do not read other seats' files until a
 > phase gives you their paths, and never read the parent Pi session. Be
-> specific and concrete; round posts ≤ 700 words (everyone re-reads them every
-> round; phase-1 items aren't capped). Never concede just because
+> specific and concrete; keep round posts short, roughly 700 words — a guide,
+> not a limit to trim to (everyone re-reads them every round; phase-1 items
+> aren't capped). Never concede just because
 > others disagree — only to a named argument or evidence. When done with a
 > phase, stop and wait.
 
