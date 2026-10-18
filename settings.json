@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "0.99.1",
+  "lastChangelogVersion": "1.2.0",
   "defaultProjectTrust": "always",
   "defaultProvider": "anthropic",
   "defaultModel": "claude-opus-5-5",
