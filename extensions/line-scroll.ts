@@ -26,17 +26,25 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { isKeyRelease, matchesKey, TuiAltScreen } from "@earendil-works/pi-tui";
+import { isKeyRelease, matchesKey } from "@earendil-works/pi-tui";
+
+// Duck-typed rather than `instanceof TuiAltScreen`: older pi-tui builds don't
+// export TuiAltScreen at all (instanceof undefined throws), and duplicate
+// pi-tui copies would make instanceof silently fail. Only TuiAltScreen has
+// scrollBy; TuiMainScreen does not.
+type Scrollable = { scrollBy(lines: number): void };
+const isScrollable = (t: unknown): t is Scrollable =>
+	typeof (t as Partial<Scrollable> | null)?.scrollBy === "function";
 
 const SCROLL_UP_KEY = "ctrl+y";
 const SCROLL_DOWN_KEY = "ctrl+e";
 
 export default function (pi: ExtensionAPI) {
-	let tui: TuiAltScreen | undefined;
+	let tui: Scrollable | undefined;
 
 	pi.on("session_start", (_event, ctx) => {
 		ctx.ui.setWidget("line-scroll-capture", (t) => {
-			if (t instanceof TuiAltScreen) tui = t;
+			if (isScrollable(t)) tui = t;
 			return { render: () => [] };
 		});
 
