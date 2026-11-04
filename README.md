@@ -38,9 +38,9 @@ better UX *and* much smarter than Claude Code, the Claude.ai web harness, etc.
   maybe it'll amuse you, maybe it'll actually do something great as an extra, at the
   very least you'll make it happy
 
-<img src="docs/tmux-windows.png" align="right" width="300" alt="tmux window list: pi sessions grouped by project, with side agents, status and session summaries">
-
 **Agent swarms** are managed as tmux windows, heavily building on [pi-side-agents](https://github.com/pasky/pi-side-agents):
+
+<img src="docs/tmux-windows.png" align="right" width="300" alt="tmux window list: pi sessions grouped by project, with side agents, status and session summaries">
 
 - all my work happens in a big tmux on a permanently running Linux server, to which
   I connect from my Macbook remotely
@@ -60,8 +60,6 @@ better UX *and* much smarter than Claude Code, the Claude.ai web harness, etc.
   windows organized by projects (pi session cwd) as branch names (LLM-generated based
   on initial prompt) plus LLM-generated [session summaries](https://github.com/pasky/pi-session-summary), along with session status
   (working / done / idle), and let me quickly switch by typing the window number
-
-<br clear="right">
 
 **Multi-model collaboration** happens not just with reviews, but also using [`/board`](skills/board/SKILL.md).
 It spawns a set of side agents across multiple provides (I use Fable, Astra and Argon)
