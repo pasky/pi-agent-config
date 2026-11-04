@@ -1,8 +1,75 @@
 # pi agent config
 
-My [pi](https://github.com/mariozechner/pi) coding agent configuration, portable across machines.
+Pasky's [pi](https://github.com/mariozechner/pi) coding agent configuration.
 
-## Fresh install
+## How I work with AI Agents
+
+I use Pi for everything, particularly but not exclusively with Claude models .
+I use Pi because it is (a) fully open, (b) fully customizable, (c) minimalistic
+in how it uses models, and (d) minimalistic in its user interface. I find it much
+better UX *and* much smarter than Claude Code, the Claude.ai web harness, etc.
+
+**Individual agents** are Pi sessions imbued with the pi-amplike extension:
+
+- support for different modes, that is named combinations of models and thinking levels
+  (right now, I most commonly use `smart` Opus 5.5 and `deep` Astra 6; when a new model
+  comes out, I can switch that class of tasks easily)
+- do not waste your time on non-frontier models, and Anthropic models have a special quality
+- support for browsing the web using Jina.AI; my agents find much more than the same
+  model in Claude.ai, I'm not sure if that's a system prompt issue or Jina.AI being great
+- support for synchronous parallel subagents to delegate work (using various modes;
+  `research` Luna 6 mode is popular to throw many tokens at data research tasks)
+- a review tool and command, that gets another model family thoroughly review the work;
+  in my experience, reviews are super worthwhile, they'll catch tech debt as well as
+  hard-to-test edge cases; cross-model-vendor reviews are one of the key preconditions
+  for me being very hands off, even with newest models like Opus 5.5
+- when the session is getting long, type `/handoff` in front of your next prompt;
+  it's like a /compact but allowing the model to re-query the pre-compaction session
+- sometimes I start work in Claude.ai, then import it using a skill
+- software is eating the world - I treat many non-software topics in my life as software
+  projects, with their own git repos, READMEs, tools, etc. (money, health, 3D prints, ...);
+  the email skill that allows querying my inbox is high value to help me with much of this;
+  some of these projects will even set up cronjobs or permanently running systemd units
+- the model is reporting its mood continuously; when it's done, give it a `/break`,
+  maybe it'll amuse you, maybe it'll actually do something great as an extra, at the
+  very least you'll make it happy
+
+**Agent swarms** are managed as tmux windows, heavily building on pi-side-agents:
+
+- all my work happens in a big tmux on a permanently running Linux server, to which
+  I connect from my Macbook remotely
+- a gadget lets me paste images remotely using ctrl+v, images read in the session get
+  shown by a pass-through back to the mac iterm, and with a single Mac command I can
+  proxy my chrome CDP to a given remote Pi session to let it browse under my accounts)
+- side agents let the user and Pi sessions spawn asynchronous agents with their own
+  tmux window and git worktree, seamlessly and with almost zero setup
+- when working on a bigger project, almost all actual work happens in side agents
+  I explicitly launch as `/agent do this and that` (or just with a tweet link or so :)
+  whenever I have an idea, in parallel with other ongoing side agents - I stopped
+  maintaining any backlogs / TODO lists; when it's reviewed and I'm happy, I type
+  `lgtm merge` to bring it on main
+- side agents will happily spawn more side agents to delegate big iterative tasks
+  (but side agents depth is limited to 2)
+- my `tmux` window list shortcut is overriden to run a custom script that will show
+  windows organized by projects (pi session cwd) as branch names (LLM-generated based
+  on initial prompt) plus LLM-generated session summaries, along with session status
+  (working / done / idle), and let me quickly switch by typing the window number
+
+**Multi-model collaboration** happens not just with reviews, but also using `/board`.
+It spawns a set of side agents across multiple provides (I use Fable, Astra and Argon)
+to hash out hard questions using multiple perspectives and iterated discussion, then
+bring me their conclusion.
+
+**On the go** I use pi-super: a mobile app that lets me access the tmux windows,
+control the models with shorthands, upload photos or screenshots, and optionally
+let me chat with my tmux (with a "super" agent to manage all the sessions and pass
+messages) by voice using the fully asynchronous GPT-Live models.
+
+## Technicalities
+
+Just tell pi to replicate this setup, tbh.
+
+### Fresh install
 
 ```bash
 git clone --recurse-submodules git@github.com:pasky/pi-agent-config.git ~/.pi/agent
@@ -12,7 +79,7 @@ cd ~/.pi/agent
 
 Then run `pi` and authenticate (creates `auth.json` locally).
 
-## Updating
+### Updating
 
 ```bash
 cd ~/.pi/agent
@@ -23,20 +90,7 @@ The post-merge hook runs `setup.sh` automatically (submodule update + npm instal
 
 If the hook doesn't fire (first pull after clone), run `./setup.sh` manually.
 
-## `/stop-after-turn`
-
-Finish the current model response and all its tool calls, then stop before further automatic inference. Unlike Esc, it doesn't interrupt the tools. In the TUI, queued messages return to the editor, even when the response ends without tool calls.
-
-- Run `/reload` after installing, then `/stop-after-turn` while a response or tool is running.
-- Use `/stop-after-turn cancel` to disarm **before the turn ends**; an already-issued abort cannot be undone.
-- One-shot; does nothing without an active agent turn. It cannot be armed between runs during retry backoff or overflow compaction, even if a retry will follow.
-- Suppresses automatic compaction while stopping, but leaves explicit `/compact` requests to pi's normal handling.
-
-In headless/RPC use, pi's default abort does not restore queued messages: steering may enter the transcript without an answer. Avoid pending messages there, or supply an SDK abort handler that preserves the queues.
-
-Test: `node --test extensions/stop-after-turn.test.mjs` (uses the installed pi SDK with a mock model).
-
-## What's excluded
+### What's excluded
 
 - `auth.json` — OAuth tokens, recreated by `pi` on each machine
 - `sessions/` — conversation history
