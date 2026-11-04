@@ -4,8 +4,10 @@ Pasky's [pi](https://github.com/earendil-works/pi) coding agent configuration.
 
 ## How I work with AI Agents
 
-TL;DR: Pi + tmux + custom skills and extensions for multi-agent work my way and
-other basic goodies like web browsing.
+TL;DR:
+- @badlogicgames's Pi all the way <3
+- tmux (yes, still, in 2026!)
+- a few big extensions & custom skills for many-agent work *my way* (that I like much better than 95% of what I see out there)
 
 I use Pi for everything, particularly but not exclusively with Claude models.
 I use Pi because it is (a) fully open, (b) fully customizable, (c) minimalistic
@@ -52,6 +54,7 @@ better UX *and* much smarter than Claude Code, the Claude.ai web harness, etc.
   proxy my [chrome CDP](https://github.com/pasky/chrome-cdp-skill) to a given remote Pi session to let it browse under my accounts)
 - side agents let the user and Pi sessions spawn asynchronous agents with their own
   tmux window and git worktree, seamlessly and with almost zero setup
+- side agents do *not* waste time on personalities / roles, separate VMs, etc.
 - when working on a bigger project, almost all actual work happens in side agents
   I explicitly launch as `/agent do this and that` (or just with a tweet link or so :)
   whenever I have an idea, in parallel with other ongoing side agents - I stopped
