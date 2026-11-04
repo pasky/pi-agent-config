@@ -48,8 +48,11 @@ answer different questions. Otherwise go: start the chair with `agent-start`
 (no `model` — it runs your mode; `branchHint` `board-chair-<word>`) and the
 description "You are the chair of the board in `<BOARD>`: read
 `~/.pi/agent/skills/board/SKILL.md` and run §2–§5. Don't ask the user
-anything; stop when `memo.md` is written." Then end your turn — don't block
-on it; you'll be notified when the chair goes idle.
+anything; stop when `memo.md` is written." Then **block on `agent-wait-any`** for the chair (tell the user briefly what
+you convened first, in the same turn). You are NOT notified when the chair
+goes idle — if you end your turn instead, nobody reads the memo until the
+user pokes you. Long boards: re-call `agent-wait-any` until it returns
+`waiting_user`.
 
 ## 2. Mechanics (chair)
 
@@ -166,6 +169,6 @@ for it.
 
 ## 6. Deliver (convener)
 
-When notified that the chair is idle: read `memo.md` (not the rounds),
+When `agent-wait-any` reports the chair `waiting_user` and `memo.md` exists: read `memo.md` (not the rounds),
 spot-check the decisive factual claims of the finalists yourself, summarize
 the memo to the user, then `agent-send` `/quit` to the chair.
