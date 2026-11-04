@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "1.2.0",
+  "lastChangelogVersion": "1.4.0",
   "defaultProjectTrust": "always",
   "defaultProvider": "anthropic",
   "defaultModel": "claude-opus-5-5",
@@ -36,5 +36,10 @@
   "showCacheMissNotices": true,
   "warnings": {
     "anthropicExtraUsage": false
+  },
+  "extensionChangelogVersions": {
+    "{\"source\":\"npm:@marckrenn/pi-sub-core@1.5.0\",\"scope\":\"user\"}": "1.5.0",
+    "{\"source\":\"npm:@marckrenn/pi-sub-bar@1.5.0\",\"scope\":\"user\"}": "1.5.0",
+    "{\"source\":\"npm:pi-autoresearch\",\"scope\":\"user\"}": "1.7.0"
   }
 }
