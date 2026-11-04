@@ -38,6 +38,8 @@ better UX *and* much smarter than Claude Code, the Claude.ai web harness, etc.
   <img src="https://raw.githubusercontent.com/pasky/pi-amplike/main/demo.gif" width="720" alt="pi-amplike: parallel subagents at work">
 </p>
 
+<img src="docs/tmux-windows.png" align="right" width="300" alt="tmux window list: pi sessions grouped by project, with side agents, status and session summaries">
+
 **Agent swarms** are managed as tmux windows, heavily building on [pi-side-agents](https://github.com/pasky/pi-side-agents):
 
 - all my work happens in a big tmux on a permanently running Linux server, to which
@@ -59,10 +61,10 @@ better UX *and* much smarter than Claude Code, the Claude.ai web harness, etc.
   on initial prompt) plus LLM-generated [session summaries](https://github.com/pasky/pi-session-summary), along with [session status](https://github.com/pasky/pi-side-agents/blob/main/contrib/tmux-switch/tmux-agent-state.ts)
   (working / done / idle), and let me quickly switch by typing the window number
 
+<br clear="right">
+
 <p align="center">
-  <img src="docs/tmux-windows.png" width="45%" alt="tmux window list: pi sessions grouped by project, with side agents, status and session summaries">
-  &nbsp;
-  <img src="https://github.com/user-attachments/assets/9010be2e-755e-41cc-9b98-312ba3fdd53e" width="52%" alt="pi-side-agents: status updates and launching a new /agent">
+  <img src="https://github.com/user-attachments/assets/9010be2e-755e-41cc-9b98-312ba3fdd53e" width="720" alt="pi-side-agents: status updates and launching a new /agent">
 </p>
 
 **Multi-model collaboration** happens not just with reviews, but also using [`/board`](skills/board/SKILL.md).
