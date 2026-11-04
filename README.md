@@ -4,7 +4,10 @@ Pasky's [pi](https://github.com/earendil-works/pi) coding agent configuration.
 
 ## How I work with AI Agents
 
-I use Pi for everything, particularly but not exclusively with Claude models .
+TL;DR: Pi + tmux + custom skills and extensions for multi-agent work my way and
+other basic goodies like web browsing.
+
+I use Pi for everything, particularly but not exclusively with Claude models.
 I use Pi because it is (a) fully open, (b) fully customizable, (c) minimalistic
 in how it uses models, and (d) minimalistic in its user interface. I find it much
 better UX *and* much smarter than Claude Code, the Claude.ai web harness, etc.
