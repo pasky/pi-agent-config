@@ -54,9 +54,9 @@ better UX *and* much smarter than Claude Code, the Claude.ai web harness, etc.
   `lgtm merge` to bring it on main
 - side agents will happily spawn more side agents to delegate big iterative tasks
   (but side agents depth is limited to 2)
-- my `tmux` window list shortcut is overriden to run a custom script that will show
+- my `tmux` window list shortcut is overriden to run a [custom script](https://github.com/pasky/pi-side-agents/tree/main/contrib/tmux-switch) that will show
   windows organized by projects (pi session cwd) as branch names (LLM-generated based
-  on initial prompt) plus LLM-generated [session summaries](https://github.com/pasky/pi-session-summary), along with [session status](extensions/tmux-agent-state.ts)
+  on initial prompt) plus LLM-generated [session summaries](https://github.com/pasky/pi-session-summary), along with [session status](https://github.com/pasky/pi-side-agents/blob/main/contrib/tmux-switch/tmux-agent-state.ts)
   (working / done / idle), and let me quickly switch by typing the window number
 
 <p align="center">
