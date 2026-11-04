@@ -30,13 +30,13 @@ better UX *and* much smarter than Claude Code, the Claude.ai web harness, etc.
   projects, with their own git repos, READMEs, tools, etc. (money, health, 3D prints, ...);
   the [email skill](skills/email/SKILL.md) that allows querying my inbox is high value to help me with much of this;
   some of these projects will even set up cronjobs or permanently running systemd units
+- the setup is continuously evolving, and of course I evolve it by just telling pi
+  how I'd like it to behave; sometimes I use a forked Pi (tweaking the mouse UX and
+  how inline images are handled); sometimes an idea stops being worthwhile (I have
+  the [advisor](https://github.com/pasky/pi-omplike-advisor) disabled now as the gap between cheap models and Opus 5.5 grew too wide)
 - the model is [reporting its mood](extensions/mood.ts) continuously; when it's done, give it a [`/break`](prompts/break.md),
   maybe it'll amuse you, maybe it'll actually do something great as an extra, at the
   very least you'll make it happy
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/pasky/pi-amplike/main/demo.gif" width="720" alt="pi-amplike: parallel subagents at work">
-</p>
 
 <img src="docs/tmux-windows.png" align="right" width="300" alt="tmux window list: pi sessions grouped by project, with side agents, status and session summaries">
 
@@ -58,14 +58,10 @@ better UX *and* much smarter than Claude Code, the Claude.ai web harness, etc.
   (but side agents depth is limited to 2)
 - my `tmux` window list shortcut is overriden to run a [custom script](https://github.com/pasky/pi-side-agents/tree/main/contrib/tmux-switch) that will show
   windows organized by projects (pi session cwd) as branch names (LLM-generated based
-  on initial prompt) plus LLM-generated [session summaries](https://github.com/pasky/pi-session-summary), along with [session status](https://github.com/pasky/pi-side-agents/blob/main/contrib/tmux-switch/tmux-agent-state.ts)
+  on initial prompt) plus LLM-generated [session summaries](https://github.com/pasky/pi-session-summary), along with session status
   (working / done / idle), and let me quickly switch by typing the window number
 
 <br clear="right">
-
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/9010be2e-755e-41cc-9b98-312ba3fdd53e" width="720" alt="pi-side-agents: status updates and launching a new /agent">
-</p>
 
 **Multi-model collaboration** happens not just with reviews, but also using [`/board`](skills/board/SKILL.md).
 It spawns a set of side agents across multiple provides (I use Fable, Astra and Argon)
