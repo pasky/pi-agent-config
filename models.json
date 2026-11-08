@@ -1,5 +1,10 @@
 {
   "providers": {
+    "openai": {
+      "modelOverrides": {
+        "gpt-6-astra": { "contextWindow": 1050000 }
+      }
+    },
     "openrouter": {
       "modelOverrides": {
         "z-ai/glm-5.2": {
