@@ -3,6 +3,11 @@
   "defaultProjectTrust": "always",
   "defaultProvider": "anthropic",
   "defaultModel": "claude-opus-5-5",
+  "compaction": {
+    "modelOverrides": {
+      "openai/gpt-6-astra": { "reserveTokens": 550000 }
+    }
+  },
   "defaultThinkingLevel": "high",
   "enabledModels": [
     "anthropic/claude-fable-5-1",
