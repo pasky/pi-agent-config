@@ -6,12 +6,12 @@
   "defaultThinkingLevel": "high",
   "enabledModels": [
     "anthropic/claude-fable-5-1",
-    "openai-codex/gpt-5.6-sol",
-    "openai-codex/gpt-5.6-luna",
+    "openai/gpt-5.6-sol",
+    "openai/gpt-5.6-luna",
     "openrouter/z-ai/glm-5.2",
     "openrouter/moonshotai/kimi-k3",
     "anthropic/claude-opus-5-5",
-    "openai-codex/gpt-6-astra"
+    "openai/gpt-6-astra"
   ],
   "hideThinkingBlock": false,
   "packages": [
@@ -41,5 +41,6 @@
     "{\"source\":\"npm:@marckrenn/pi-sub-core@1.5.0\",\"scope\":\"user\"}": "1.5.0",
     "{\"source\":\"npm:@marckrenn/pi-sub-bar@1.5.0\",\"scope\":\"user\"}": "1.5.0",
     "{\"source\":\"npm:pi-autoresearch\",\"scope\":\"user\"}": "1.7.0"
-  }
+  },
+  "deviceId": "8a2f356f-716b-43ce-abce-ba9f3b2a60b0"
 }

@@ -13,7 +13,7 @@
       "thinkingLevel": "high"
     },
     "deep": {
-      "provider": "openai-codex",
+      "provider": "openai",
       "modelId": "gpt-6-astra",
       "thinkingLevel": "high"
     },
@@ -28,7 +28,7 @@
       "thinkingLevel": "high"
     },
     "research": {
-      "provider": "openai-codex",
+      "provider": "openai",
       "modelId": "gpt-6-luna",
       "thinkingLevel": "high"
     },
