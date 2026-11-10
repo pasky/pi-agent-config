@@ -18,7 +18,8 @@
     "openrouter/z-ai/glm-5.2",
     "openrouter/moonshotai/kimi-k3",
     "anthropic/claude-opus-5-5",
-    "openai/gpt-6-astra"
+    "openai/gpt-6-astra",
+    "openrouter/google/gemini-4-carbon"
   ],
   "hideThinkingBlock": false,
   "packages": [
