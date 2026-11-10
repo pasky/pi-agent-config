@@ -6,6 +6,35 @@
       }
     },
     "openrouter": {
+      // TMP: drop once the pi.dev catalog lists google/gemini-4-carbon (a models[]
+      // entry replaces the catalog one). Clone of the catalog's gemini-4-argon entry;
+      // OpenRouter lists identical pricing and limits for both.
+      "models": [
+        {
+          "id": "google/gemini-4-carbon",
+          "name": "Google: Gemini 4 Carbon",
+          "reasoning": true,
+          "input": ["text", "image"],
+          "cost": { "input": 2, "output": 10, "cacheRead": 0.1, "cacheWrite": 0.1875 },
+          "contextWindow": 1048576,
+          "maxTokens": 943718,
+          "thinkingLevelMap": {
+            "off": null, "minimal": null, "low": "low", "medium": "medium",
+            "high": "high", "xhigh": null, "max": null
+          },
+          "compat": {
+            "supportsDeveloperRole": false,
+            "thinkingFormat": "openrouter",
+            "supportsStrictMode": true,
+            "sendSessionAffinityHeaders": true
+          },
+          "inputLimits": {
+            "images": {
+              "resize": { "maxWidth": 2000, "maxHeight": 2000, "maxBytes": 4718592, "jpegQuality": 80 }
+            }
+          }
+        }
+      ],
       "modelOverrides": {
         "z-ai/glm-5.2": {
           "compat": {
