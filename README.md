@@ -68,7 +68,7 @@ better UX *and* much smarter than Claude Code, the Claude.ai web harness, etc.
   (working / done / idle), and let me quickly switch by typing the window number
 
 **Multi-model collaboration** happens not just with reviews, but also using [`/board`](skills/board/SKILL.md).
-It spawns a set of side agents across multiple provides (I use Fable, Astra and Argon)
+It spawns a set of side agents across multiple provides (I use Fable, Astra and Carbon)
 to hash out hard questions using multiple perspectives and iterated discussion, then
 bring me their conclusion.
 
