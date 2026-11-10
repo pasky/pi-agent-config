@@ -19,7 +19,7 @@
     },
     "oracle": {
       "provider": "openrouter",
-      "modelId": "google/gemini-4-argon",
+      "modelId": "google/gemini-4-carbon",
       "thinkingLevel": "high"
     },
     "unchained": {

@@ -31,8 +31,7 @@ Write a short charter to `BOARD/charter.md`:
   `model: "<provider>/<modelId>:<thinkingLevel>"`. Seat name = short model
   name (fable, astra, …), not the mode name (mode names imply rank).
 
-  **Current roster:** `best` (Fable), `deep` (GPT Astra), `oracle` (Gemini
-  Argon).
+  **Current roster:** `best` (Claude), `deep` (GPT), `oracle` (Gemini).
 
   Roster principle (for when the user asks to revise it): one seat per
   frontier lab with genuinely different training. Never two seats from the
