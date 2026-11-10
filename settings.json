@@ -1,11 +1,13 @@
 {
-  "lastChangelogVersion": "1.4.0",
+  "lastChangelogVersion": "1.5.0",
   "defaultProjectTrust": "always",
   "defaultProvider": "anthropic",
   "defaultModel": "claude-fable-5-2",
   "compaction": {
     "modelOverrides": {
-      "openai/gpt-6-astra": { "reserveTokens": 550000 }
+      "openai/gpt-6-astra": {
+        "reserveTokens": 550000
+      }
     }
   },
   "defaultThinkingLevel": "high",
