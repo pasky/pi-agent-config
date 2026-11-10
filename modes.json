@@ -1,10 +1,10 @@
 {
   "version": 1,
-  "currentMode": "smart",
+  "currentMode": "best",
   "modes": {
     "best": {
       "provider": "anthropic",
-      "modelId": "claude-fable-5-1",
+      "modelId": "claude-fable-5-2",
       "thinkingLevel": "high"
     },
     "smart": {
