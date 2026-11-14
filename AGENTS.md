@@ -13,3 +13,5 @@
 - Review/subagent scripts must be memory-bounded on dense meshes, images, and large arrays. A Viktor-mask review once exhausted roughly 55 GB by running an unconstrained Python geometry check. Before execution, inspect dimensions and algorithmic allocation, avoid full ray/triangle or other Cartesian-product arrays, batch/stream work, and impose a practical process memory limit; do not blindly rerun a failed command.
 - Type non-ASCII (—, ≥, “”) literally in edit args, never as `\uXXXX`; on edit failure, retry edit, don't switch to Python.
 - Before adding a test (including one a reviewer suggests), check that existing tests don't already cover the behavior, and don't write tests that only restate config/data values.
+- Periodic/background jobs (cron, systemd timers, ~/projects/watchers) get API keys, `pi` and nvm node by sourcing `~/.bashrc` (`. $HOME/.bashrc;` / `bash -c '. "$$HOME/.bashrc"; exec ...'` in units) — never copy keys into separate env files.
+- For LLM judgement in scripts/jobs, prefer pi's `research` mode (`pi -p --model <modes.json research>`) over the local llama-server Qwen; use local Qwen at most as a side-by-side calibration arm.
