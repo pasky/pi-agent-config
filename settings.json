@@ -2,7 +2,7 @@
   "lastChangelogVersion": "1.5.0",
   "defaultProjectTrust": "always",
   "defaultProvider": "anthropic",
-  "defaultModel": "claude-fable-5-2",
+  "defaultModel": "claude-opus-5-5",
   "compaction": {
     "modelOverrides": {
       "openai/gpt-6-astra": {
