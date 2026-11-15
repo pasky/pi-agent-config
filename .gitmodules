@@ -26,3 +26,7 @@
 	path = packages/pi-ssh-image-clipboard
 	url = git@github.com:pasky/pi-ssh-image-clipboard.git
 	branch = main
+[submodule "packages/pi-sub"]
+	path = packages/pi-sub
+	url = git@github.com:pasky/pi-sub.git
+	branch = fix-stale-ctx-after-shutdown
