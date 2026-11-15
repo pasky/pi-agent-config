@@ -1,6 +1,6 @@
 - When rm -rf, make sure you are 100% sure about everything this is going to irrecoverably wipe; consider mv x x~ instead
 - Use uv for everything Python-related (venv creation, package installs, running scripts)
-- Any subagents use for research should use the `research` mode. Advanced reasoning work should use the `deep` mode.
+- Any subagents use for research should use the `research` mode (mechanical low-creativity work requiring advanced reasoning should use the `deep` mode).
 - Research subagent output that goes *beyond* pure research (gradings, verdicts, decisions) must get an explicit review of its final decisions — by you or a smart/deep-mode reviewer subagent. Pure research needs no review pass. Ideal pipeline: research subagents for research → deep/smart subagents for grading → you critically eyeball key sources + main conclusions yourself.
 - When `git rebase` etc., make sure to GIT_EDITOR=true to avoid hangs
 - Never mask out issues by using patterns like `kill 3273547 2>/dev/null; echo "killed"`
