@@ -5,6 +5,15 @@
         "gpt-6-astra": { "contextWindow": 1050000 }
       }
     },
+    // Must mirror "openai": settings.json compaction reserves 550k for
+    // openai-codex/gpt-6-astra, which against the catalog's 272k window makes the
+    // threshold negative -> compaction after every turn. Codex accepts the 1.05M
+    // window as a client-side opt-in (input ceiling 922k).
+    "openai-codex": {
+      "modelOverrides": {
+        "gpt-6-astra": { "contextWindow": 1050000 }
+      }
+    },
     "openrouter": {
       // TMP: drop once the pi.dev catalog lists google/gemini-4-carbon (a models[]
       // entry replaces the catalog one). Clone of the catalog's gemini-4-argon entry;
