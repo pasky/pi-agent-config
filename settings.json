@@ -5,7 +5,7 @@
   "defaultModel": "claude-opus-5-5",
   "compaction": {
     "modelOverrides": {
-      "openai-codex/gpt-6-astra": {
+      "openai-codex/gpt-6.2-astra": {
         "reserveTokens": 550000
       }
     }
@@ -18,7 +18,7 @@
     "openrouter/z-ai/glm-5.2",
     "openrouter/moonshotai/kimi-k3",
     "anthropic/claude-opus-5-5",
-    "openai-codex/gpt-6-astra",
+    "openai-codex/gpt-6.2-astra",
     "openrouter/google/gemini-4-carbon"
   ],
   "hideThinkingBlock": false,

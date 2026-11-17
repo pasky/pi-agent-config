@@ -1,15 +1,90 @@
 {
   "providers": {
+    // TMP: drop the gpt-6.2-astra models[] entries (openai + openai-codex) once the
+    // pi.dev catalog lists it. Clones of the catalog's gpt-6-astra entries with
+    // OpenRouter's gpt-6.2-astra pricing; window set to 1.05M directly (see below).
     "openai": {
+      "models": [
+        {
+          "id": "gpt-6.2-astra",
+          "name": "GPT-6.2 Astra",
+          "api": "openai-responses",
+          "baseUrl": "https://api.openai.com/v1",
+          "reasoning": true,
+          "input": ["text", "image"],
+          "cost": {
+            "input": 8, "output": 40, "cacheRead": 0.4, "cacheWrite": 10,
+            "tiers": [
+              { "inputTokensAbove": 272000, "input": 16, "output": 60, "cacheRead": 0.8, "cacheWrite": 20 }
+            ]
+          },
+          "contextWindow": 1050000,
+          "maxTokens": 128000,
+          "thinkingLevelMap": {
+            "off": null, "minimal": null, "low": "low", "medium": "medium",
+            "high": "high", "xhigh": "xhigh", "max": "max"
+          },
+          "compat": {
+            "supportsStrictMode": true,
+            "supportsOpenAIGrammarTools": true,
+            "supportsAdditionalTools": true,
+            "supportsToolSearch": true,
+            "supportsMidConvoSystemMessages": true,
+            "supportsExplicitPromptCacheMode": true,
+            "supportsMidConvoEffort": true
+          },
+          "inputLimits": {
+            "maxRequestBytes": 536870912,
+            "images": {
+              "maxPerRequest": 1500,
+              "resize": { "maxWidth": 2000, "maxHeight": 2000, "maxBytes": 4718592, "jpegQuality": 80 }
+            }
+          }
+        }
+      ],
       "modelOverrides": {
         "gpt-6-astra": { "contextWindow": 1050000 }
       }
     },
     // Must mirror "openai": settings.json compaction reserves 550k for
-    // openai-codex/gpt-6-astra, which against the catalog's 272k window makes the
-    // threshold negative -> compaction after every turn. Codex accepts the 1.05M
+    // openai-codex/gpt-6.2-astra (formerly gpt-6-astra), which against the
+    // catalog's 272k window makes the threshold negative -> compaction after
+    // every turn; keep the 1.05M window on any model given that reserve. Codex accepts the 1.05M
     // window as a client-side opt-in (input ceiling 922k).
     "openai-codex": {
+      "models": [
+        {
+          "id": "gpt-6.2-astra",
+          "name": "GPT-6.2 Astra",
+          "api": "openai-codex-responses",
+          "baseUrl": "https://chatgpt.com/backend-api",
+          "reasoning": true,
+          "input": ["text", "image"],
+          "cost": {
+            "input": 8, "output": 40, "cacheRead": 0.4, "cacheWrite": 10,
+            "tiers": [
+              { "inputTokensAbove": 272000, "input": 16, "output": 60, "cacheRead": 0.8, "cacheWrite": 20 }
+            ]
+          },
+          "contextWindow": 1050000,
+          "maxTokens": 128000,
+          "thinkingLevelMap": {
+            "off": null, "minimal": "low", "low": "low", "medium": "medium",
+            "high": "high", "xhigh": "xhigh", "max": "max"
+          },
+          "compat": {
+            "supportsOpenAIGrammarTools": true,
+            "supportsAdditionalTools": true,
+            "supportsToolSearch": true,
+            "supportsMidConvoSystemMessages": true
+          },
+          "inputLimits": {
+            "images": {
+              "resize": { "maxWidth": 2000, "maxHeight": 2000, "maxBytes": 4718592, "jpegQuality": 80 }
+            }
+          }
+        }
+      ],
       "modelOverrides": {
         "gpt-6-astra": { "contextWindow": 1050000 }
       }

@@ -14,7 +14,7 @@
     },
     "deep": {
       "provider": "openai-codex",
-      "modelId": "gpt-6-astra",
+      "modelId": "gpt-6.2-astra",
       "thinkingLevel": "high"
     },
     "oracle": {
