@@ -14,4 +14,4 @@
 - Type non-ASCII (—, ≥, “”) literally in edit args, never as `\uXXXX`; on edit failure, retry edit, don't switch to Python.
 - Before adding a test (including one a reviewer suggests), check that existing tests don't already cover the behavior, and don't write tests that only restate config/data values.
 - Periodic/background jobs (cron, systemd timers, ~/projects/watchers) get API keys, `pi` and nvm node by sourcing `~/.bashrc` (`. $HOME/.bashrc;` / `bash -c '. "$$HOME/.bashrc"; exec ...'` in units) — never copy keys into separate env files.
-- For LLM judgement in scripts/jobs, prefer pi's `research` mode (`pi -p --model <modes.json research>`) over the local llama-server Qwen; use local Qwen at most as a side-by-side calibration arm.
+- For LLM judgement in scripts/jobs, prefer pi's `research` mode (`pi -p --model <modes.json research>`) over the local llama-server Qwen; use local Qwen at most as a side-by-side calibration arm. (*Inside* your session, of course use the subagents or side agents tool rather than spawning your own pi.)
