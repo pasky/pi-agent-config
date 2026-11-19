@@ -91,6 +91,17 @@
     },
     "openrouter": {
       "modelOverrides": {
+        // Vertex route is slow/flaky on OpenRouter (48s latency, 61% uptime vs
+        // AI Studio 4s, 98%); all our Carbon calls landed on Vertex and timed out.
+        // The plain google-ai-studio endpoint caps max_completion_tokens at 32768;
+        // the catalog's 943718 made OpenRouter silently filter AI Studio out
+        // ("Filter by Context Length"), so maxTokens must stay <= 32768.
+        "google/gemini-4-carbon": {
+          "maxTokens": 32768,
+          "compat": {
+            "openRouterRouting": { "order": ["google-ai-studio"], "allow_fallbacks": false }
+          }
+        },
         "z-ai/glm-5.2": {
           "compat": {
             "openRouterRouting": {
