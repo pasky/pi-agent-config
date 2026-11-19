@@ -19,7 +19,8 @@
     "openrouter/moonshotai/kimi-k3",
     "anthropic/claude-opus-5-5",
     "openai-codex/gpt-6.2-astra",
-    "openrouter/google/gemini-4-carbon"
+    "openrouter/google/gemini-4-carbon",
+    "openrouter/google/gemini-4-neon"
   ],
   "hideThinkingBlock": false,
   "packages": [

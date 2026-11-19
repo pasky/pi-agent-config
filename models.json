@@ -102,6 +102,13 @@
             "openRouterRouting": { "order": ["google-ai-studio"], "allow_fallbacks": false }
           }
         },
+        // Same Vertex-avoidance for Neon (oracle mode); catalog maxTokens 65536
+        // already fits the plain google-ai-studio endpoint cap.
+        "google/gemini-4-neon": {
+          "compat": {
+            "openRouterRouting": { "order": ["google-ai-studio"], "allow_fallbacks": true }
+          }
+        },
         "z-ai/glm-5.2": {
           "compat": {
             "openRouterRouting": {

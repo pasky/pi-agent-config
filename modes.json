@@ -19,8 +19,8 @@
     },
     "oracle": {
       "provider": "openrouter",
-      "modelId": "google/gemini-4-carbon",
-      "thinkingLevel": "high"
+      "modelId": "google/gemini-4-neon",
+      "thinkingLevel": "xhigh"
     },
     "unchained": {
       "provider": "openrouter",
