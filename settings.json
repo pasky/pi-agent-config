@@ -38,7 +38,8 @@
     "extensions/tps.ts",
     "extensions/review.ts",
     "extensions/nw.ts",
-    "extensions/mood.ts"
+    "extensions/mood.ts",
+    "extensions/cache-ttl.ts"
   ],
   "fullscreenScrollbar": "hidden",
   "theme": "dark",
