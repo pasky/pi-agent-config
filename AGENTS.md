@@ -3,7 +3,7 @@
 - Any subagents use for research should use the `research` mode (mechanical low-creativity work requiring advanced reasoning should use the `deep` mode).
 - Research subagent output that goes *beyond* pure research (gradings, verdicts, decisions) must get an explicit review of its final decisions — by you or a smart/deep-mode reviewer subagent. Pure research needs no review pass. Ideal pipeline: research subagents for research → deep/smart subagents for grading → you critically eyeball key sources + main conclusions yourself.
 - Reviewers come from a different lab than the author: GPT-authored work (`research`/`deep`) → `smart` (Claude) reviewer; Claude-authored → `deep` (GPT). Both are flat-rate subscriptions. `oracle` (Gemini) is pay-per-token — use it only as a third opinion when GPT and Claude reviews disagree on a decision pasky has to sign.
-- Side agents (children): never message the parent — not progress, not status, not questions. Put results/summary in your artifact; if blocked, write the question in your own pane. Either way go idle; the parent polls (agent-check shows `waiting_user` + your last output).
+- Side agents never message their parent: results go in your artifact, questions in your own pane, then go idle.
 - When `git rebase` etc., make sure to GIT_EDITOR=true to avoid hangs
 - Never mask out issues by using patterns like `kill 3273547 2>/dev/null; echo "killed"`
 - After completing a change (code/docs), commit it with a clear message once it builds/tests green — don't leave the work uncommitted waiting to be asked.
