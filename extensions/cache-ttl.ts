@@ -8,15 +8,28 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
  * (agent turns, pi's cache-warming refreshes, compaction), so it is the reset
  * signal. Display granularity: 30s steps down to 1m, then per second.
  * Shown only while the agent is idle and the entry is still alive.
+ *
+ * Gemini (implicit caching, AI Studio) has no documented TTL. Measured over our
+ * sessions (Nov 2026, Neon via OpenRouter/AI Studio), idle gap counted from the
+ * END of the previous request: ~99% hits <1m, ~86% at 2-2.5m, ~50/50 around 3m
+ * (varies by Google-side load regime), nothing past ~13-16m. We show an
+ * approximate "~" countdown of 3m measured from the end of the last response.
  */
 
 // Footer statuses are sorted by key: right after "mood", before "permissions" (YOLO mode).
 const STATUS_KEY = "mood-cache-ttl";
 const DEFAULT_TTL_S = 300;
+const GEMINI_IMPLICIT_TTL_S = 180;
+
+const isGeminiImplicit = (model: { id: string; promptCache?: unknown } | undefined) =>
+	!!model && !model.promptCache && /gemini/i.test(model.id);
 
 function ttlSeconds(ctx: ExtensionContext): number | undefined {
 	const promptCache = ctx.model?.promptCache;
-	if (!promptCache) return ctx.model?.provider === "anthropic" ? DEFAULT_TTL_S : undefined;
+	if (!promptCache) {
+		if (isGeminiImplicit(ctx.model)) return GEMINI_IMPLICIT_TTL_S;
+		return ctx.model?.provider === "anthropic" ? DEFAULT_TTL_S : undefined;
+	}
 	const retention = process.env.PI_CACHE_RETENTION === "long" ? "long" : "short";
 	return promptCache[retention] ?? promptCache.short;
 }
@@ -48,7 +61,7 @@ export default function (pi: ExtensionAPI) {
 			const remaining = lastRequestAt + ttl * 1000 - Date.now();
 			if (remaining > 0) {
 				const theme = ctx.ui.theme;
-				const label = formatRemaining(remaining);
+				const label = (isGeminiImplicit(ctx.model) ? "~" : "") + formatRemaining(remaining);
 				text = theme.fg(remaining < 60_000 ? "warning" : "muted", label) + theme.fg("dim", " │");
 			}
 		}
@@ -74,6 +87,8 @@ export default function (pi: ExtensionAPI) {
 			const entry = branch[i];
 			if (entry.type === "message" && entry.message.role === "assistant") {
 				lastRequestAt = entry.message.timestamp;
+				// Gemini TTL was measured from the end of the request.
+				if (/gemini/i.test(entry.message.model)) lastRequestAt += entry.message.durationMs ?? 0;
 				lastModelKey = `${entry.message.provider}/${entry.message.model}`;
 				break;
 			}
@@ -95,6 +110,14 @@ export default function (pi: ExtensionAPI) {
 		lastRequestAt = Date.now();
 		lastModelKey = modelKey(ctx);
 		render();
+	});
+
+	// Gemini's implicit-cache TTL was measured from the end of the previous request.
+	pi.on("message_end", (event, ctx) => {
+		if (event.message.role !== "assistant" || !isGeminiImplicit(ctx.model)) return;
+		ctxRef = ctx;
+		lastRequestAt = Date.now();
+		lastModelKey = modelKey(ctx);
 	});
 
 	pi.on("agent_start", (_event, ctx) => {
