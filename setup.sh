@@ -9,7 +9,7 @@ git submodule foreach 'git fetch --quiet'
 git submodule foreach '
   branch=$(git config -f $toplevel/.gitmodules submodule.$name.branch || echo main)
   pinned=$(git rev-parse HEAD)
-  local_ref=$(git rev-parse refs/heads/$branch 2>/dev/null || echo none)
+  local_ref=$(git rev-parse --verify -q "refs/heads/$branch" || echo none)
   if [ "$local_ref" = "none" ]; then
     # No local branch yet — create it at the pinned commit
     git switch -c $branch 2>/dev/null
@@ -29,3 +29,4 @@ git submodule foreach '
 '
 (cd packages/pi-amplike && npm install)
 (cd packages/chrome-cdp-skill && npm install)
+(cd packages/pi-sub && npm ci)
